@@ -29,15 +29,14 @@ jobs:
         #   || true:                 ALWAYS returns a success code (0).
 
     - name: Extract and Report Pylint Score
+      if: always() # This ensures the summary is ALWAYS created
       run: |
         score=$(grep -oP 'Your code has been rated at \K[\d\.\-]+' pylint_output.txt)
         echo "Pylint Score: $score"
         # Set the score as an output variable (optional, but useful for other steps)
         echo "::set-output name=pylint_score::$score"
 
-      # Optional: Create a summary (visible on the workflow run page)
-      if: always() # This ensures the summary is ALWAYS created
-      run: |
+        # Create a summary (visible on the workflow run page)
         echo "## Pylint Report Summary" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY  # Add a blank line
         echo "Pylint Score:  **$score**" >> $GITHUB_STEP_SUMMARY
