@@ -259,6 +259,52 @@ def feature_engineering(df):
         lambda fqdn: tld_scores.get("." + tldextract.extract(fqdn).suffix, 0)
     )
 
+    # [NEW] 10 additional features for spotting goodnesses or badnesses
+    
+    # Feature: has_unicode (1 if fqdn contains any non-ASCII character)
+    features['has_unicode'] = df['fqdn'].apply(lambda x: 1 if any(ord(c) > 127 for c in x) else 0)
+    
+    # Feature: ratio_alphanumeric (ratio of alphanumeric characters to the fqdn length)
+    features['ratio_alphanumeric'] = df['fqdn'].apply(lambda x: sum(c.isalnum() for c in x) / (len(x) + 1e-9))
+    
+    # Feature: vowel_diversity (number of unique vowels normalized by 5)
+    features['vowel_diversity'] = df['fqdn'].apply(lambda x: len(set(c for c in x.lower() if c in 'aeiou')) / 5)
+    
+    # Feature: digit_position_variance (variance of positions where digits occur)
+    features['digit_position_variance'] = df['fqdn'].apply(lambda x: np.var([i for i, c in enumerate(x) if c.isdigit()]) if any(c.isdigit() for c in x) else 0)
+    
+    # Feature: max_consecutive_special (max count of consecutive non-alphanumeric characters)
+    features['max_consecutive_special'] = df['fqdn'].apply(lambda x: max((len(match) for match in re.findall(r'[^a-zA-Z0-9]+', x)), default=0))
+    
+    # Feature: median_token_length (median length of tokens split by '.')
+    features['median_token_length'] = df['fqdn'].apply(lambda x: np.median([len(token) for token in x.split('.')]) if x.split('.') else 0)
+    
+    # Feature: token_length_entropy (entropy of token lengths)
+    def token_length_entropy(x):
+        tokens = [len(token) for token in x.split('.') if token]
+        if not tokens:
+            return 0
+        counts = Counter(tokens)
+        total = sum(counts.values())
+        return -sum((count / total) * np.log2(count / total) for count in counts.values())
+    features['token_length_entropy'] = df['fqdn'].apply(token_length_entropy)
+    
+    # Feature: punycode_count (number of occurrences of 'xn--')
+    features['punycode_count'] = df['fqdn'].apply(lambda x: x.count('xn--'))
+    
+    # Feature: bigram_entropy (entropy of character bigrams in the fqdn)
+    def bigram_entropy(x):
+        if len(x) < 2:
+            return 0
+        bigrams = [x[i:i+2] for i in range(len(x) - 1)]
+        counts = Counter(bigrams)
+        total = sum(counts.values())
+        return -sum((count / total) * np.log2(count / total) for count in counts.values())
+    features['bigram_entropy'] = df['fqdn'].apply(bigram_entropy)
+    
+    # Feature: is_subdomain_empty (1 if subdomain is empty; 0 otherwise)
+    features['is_subdomain_empty'] = features['subdomain'].apply(lambda x: 1 if x == '' else 0)
+    
     # Create a new DataFrame from the features dictionary
     new_features_df = pd.DataFrame(features)
 
@@ -878,11 +924,11 @@ def main():
     # Display training configuration summary
     summary_table = Table(title="Training Configuration", show_header=False)
     summary_table.add_row("Model", f"{args.model}")
-    summary_table.add_row("Engineered Features Count", f"{len(initial_features)}")
-    summary_table.add_row("Training Samples", f"{train_data.shape[0]}")
-    summary_table.add_row("Test Samples", f"{test_data.shape[0]}")
-    summary_table.add_row("Scaling", f"{args.scale}")
-    summary_table.add_row("Quantile Transform", f"{args.quantile_transform}")
+    initial_features = [col for col in train_data.columns if col not in ['fqdn','label', 'tld','sld','subdomain']]
+
+    # Display training configuration summary
+    summary_table = Table(title="Training Configuration", show_header=False)
+    summary_table.add_row("Model", f"{args.model}")
     summary_table.add_row("SMOTE", f"{args.smote}")
     summary_table.add_row("N-gram Range", f"{args.ngram_range[0]}-{args.ngram_range[1]}")
     console.print(Panel(summary_table, title="[bold cyan]Training Summary[/bold cyan]", expand=False))
