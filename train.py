@@ -1,6 +1,5 @@
 """
 FQDN classifier module.
-# pylint: disable=too-many-locals, too-many-statements, too-many-branches, line-too-long
 """
 
 # Standard Library Imports
@@ -24,6 +23,8 @@ from rich.console import Console
 from rich.progress import (Progress, SpinnerColumn, TextColumn,
                            TimeElapsedColumn)
 from rich.table import Table
+from rich.panel import Panel
+from rich import box  # new import for consistent box style
 
 # scikit-learn (sklearn) Imports - Grouped by Submodule
 from sklearn.compose import ColumnTransformer
@@ -54,26 +55,32 @@ warnings.filterwarnings("ignore", category=UserWarning, module="sklearn.feature_
 # --- Data Loading and Preprocessing ---
 console = Console()  # Initialize console here
 
-# New helper function to load TLD scores
+# Helper function to load TLD scores with error handling and a more robust path.
 @functools.lru_cache(maxsize=1)
-def load_tld_scores(file_path='/Users/fab/GitHub/fqdn_model/tlds.csv'):
-    import pandas as pd
+def load_tld_scores(file_path='tlds.csv'):
     try:
+        # Use absolute path if relative path fails
+        if not os.path.isabs(file_path):
+            file_path = os.path.join(os.path.dirname(__file__), file_path)
+
         df = pd.read_csv(file_path)
         # Ensure keys have a leading dot
-        return {row['tld']: float(row['score']) for _, row in df.iterrows()}
-    except Exception as e:
-        print(f"Error loading TLD scores: {e}")
+        return {'.' + row['tld']: float(row['score']) for _, row in df.iterrows() if 'tld' in df.columns and 'score' in df.columns}
+    except (FileNotFoundError, KeyError, ValueError) as e:
+        console.print(f"[red]Error loading TLD scores: {e}[/red]")
         return {}
 
+# Helper function to load word scores.  Similar improvements as load_tld_scores.
 @functools.lru_cache(maxsize=1)
-def load_word_scores(file_path='/Users/fab/GitHub/fqdn_model/words.csv'):
-    import pandas as pd
+def load_word_scores(file_path='words.csv'):
     try:
+        if not os.path.isabs(file_path):
+            file_path = os.path.join(os.path.dirname(__file__), file_path)
+
         df = pd.read_csv(file_path)
-        return {row['word']: float(row['score']) for _, row in df.iterrows()}
-    except Exception as e:
-        print(f"Error loading word scores: {e}")
+        return {row['word']: float(row['score']) for _, row in df.iterrows() if 'word' in df.columns and 'score' in df.columns}
+    except (FileNotFoundError, KeyError, ValueError) as e:
+        console.print(f"[red]Error loading word scores: {e}[/red]")
         return {}
 
 def load_data(blacklist_file, whitelist_file, skip_errors=False):
@@ -87,13 +94,13 @@ def load_data(blacklist_file, whitelist_file, skip_errors=False):
         data = pd.concat([df_black, df_white], ignore_index=True)
         data = data[data['fqdn'] != 'fqdn']  # Remove duplicate header rows if any
     except Exception as e:
-        console.print(f"Error loading CSV files: {e}")
+        console.print(f"[red]Error loading CSV files: {e}[/red]")
         sys.exit(1)
 
     data['fqdn'] = data['fqdn'].str.lower()
     data = data[data['fqdn'].str.match(r'^[a-z0-9.-]+$')]
     if data.empty:
-        console.print("Error: No valid data loaded.")
+        console.print("[red]Error: No valid data loaded.[/red]")
         sys.exit(1)
     # Ensure 'fqdn' is a string:
     data['fqdn'] = data['fqdn'].astype(str)
@@ -138,24 +145,26 @@ def feature_engineering(df):
     """Generates features from FQDN strings, optimized for performance."""
     features = {}
 
-    features['fqdn_length'] = df['fqdn'].apply(len)
-    features['num_dots'] = df['fqdn'].apply(lambda x: x.count('.'))
-    features['num_digits'] = df['fqdn'].apply(lambda x: sum(c.isdigit() for c in x))
-    features['num_hyphens'] = df['fqdn'].apply(lambda x: x.count('-'))
-    features['num_non_alphanumeric'] = df['fqdn'].apply(lambda x: sum(not c.isalnum() for c in x))
+    features['fqdn_length'] = df['fqdn'].str.len() #.apply(len)
+    features['num_dots'] = df['fqdn'].str.count(r'\.')
+    features['num_digits'] = df['fqdn'].str.count(r'\d')
+    features['num_hyphens'] = df['fqdn'].str.count(r'-')
+    features['num_non_alphanumeric'] = df['fqdn'].str.count(r'[^a-zA-Z0-9]') #
     features['entropy'] = df['fqdn'].apply(calculate_entropy)
-    features['has_hyphen'] = df['fqdn'].apply(lambda x: 1 if '-' in x else 0)
+    features['has_hyphen'] = df['fqdn'].str.contains(r'-').astype(int)
     extracted = df['fqdn'].apply(tldextract.extract)
     features['tld'] = extracted.apply(lambda x: x.suffix)
     features['sld'] = extracted.apply(lambda x: x.domain)
     features['subdomain'] = extracted.apply(lambda x: x.subdomain)
-    features['tld_length'] = features['tld'].apply(len)
-    features['sld_length'] = features['sld'].apply(len)
-    features['subdomain_length'] = features['subdomain'].apply(len)
+    features['tld_length'] = features['tld'].str.len()  #.apply(len)
+    features['sld_length'] = features['sld'].str.len() #.apply(len)
+    features['subdomain_length'] = features['subdomain'].str.len() #.apply(len)
+    # [NEW] New clever feature: ratio of alphanumeric characters in subdomain to its length.
+    features['subdomain_alphanum_ratio'] = features['subdomain'].apply(lambda x: sum(c.isalnum() for c in x) / (len(x) + 1e-9))
     features['digit_ratio'] = features['num_digits'] / (features['fqdn_length'] + 1e-9)
     features['non_alphanumeric_ratio'] = features['num_non_alphanumeric'] / (features['fqdn_length'] + 1e-9)
-    features['starts_with_digit'] = df['fqdn'].apply(lambda x: 1 if len(x) > 0 and x[0].isdigit() else 0)
-    features['ends_with_digit'] = df['fqdn'].apply(lambda x: 1 if len(x) > 0 and x[-1].isdigit() else 0)
+    features['starts_with_digit'] = df['fqdn'].str[0].str.isdigit().fillna(False).astype(int)
+    features['ends_with_digit'] = df['fqdn'].str[-1].str.isdigit().fillna(False).astype(int)
 
     def vowel_consonant_ratio(text):
         vowels = "aeiou"
@@ -165,7 +174,7 @@ def feature_engineering(df):
 
     features['vowel_consonant_ratio'] = df['fqdn'].apply(vowel_consonant_ratio)
     for char in "._-":
-        features[f'count_{char}'] = df['fqdn'].apply(lambda x: x.count(char))
+        features[f'count_{char}'] = df['fqdn'].str.count(re.escape(char))
 
     features['longest_consecutive_digit'] = df['fqdn'].apply(lambda x: longest_consecutive_chars(x, "0123456789"))
     features['longest_consecutive_consonant'] = df['fqdn'].apply(lambda x: longest_consecutive_chars(x.lower(), "bcdfghjklmnpqrstvwxyz"))
@@ -173,11 +182,11 @@ def feature_engineering(df):
     features['sld_entropy'] = features['sld'].apply(calculate_entropy)
     features['subdomain_entropy'] = features['subdomain'].apply(calculate_entropy)
     features['subdomain_ratio'] = features['subdomain_length'] / (features['fqdn_length'] + 1e-9)
-    features['num_vowels'] = df['fqdn'].apply(lambda x: sum(1 for char in x if char in "aeiou"))
+    features['num_vowels'] = df['fqdn'].str.count(r'[aeiou]')
     features['longest_consecutive_vowel'] = df['fqdn'].apply(lambda x: longest_consecutive_chars(x.lower(), "aeiou"))
     features['unique_char_count'] = df['fqdn'].apply(lambda x: len(set(x)))
-    features['has_www'] = df['fqdn'].apply(lambda x: 1 if "www." in x else 0)
-    features['num_consonants'] = df['fqdn'].apply(lambda x: sum(1 for char in x if char in "bcdfghjklmnpqrstvwxyz"))
+    features['has_www'] = df['fqdn'].str.contains(r'www\.').astype(int)
+    features['num_consonants'] = df['fqdn'].str.count(r'[bcdfghjklmnpqrstvwxyz]')
     features['consonant_ratio'] = features['num_consonants'] / (features['fqdn_length'] + 1e-9)
     features['unique_vowels'] = df['fqdn'].apply(lambda x: len(set(char for char in x if char in "aeiou")))
     features['unique_consonants'] = df['fqdn'].apply(lambda x: len(set(char for char in x if char in "bcdfghjklmnpqrstvwxyz")))
@@ -187,37 +196,37 @@ def feature_engineering(df):
     features['digit_sum'] = df['fqdn'].apply(lambda x: sum(int(char) for char in x if char.isdigit()))
     features['average_digit'] = df['fqdn'].apply(lambda x: (sum(int(char) for char in x if char.isdigit())) / (sum(c.isdigit() for c in x) + 1e-9))
     features['alpha_ratio'] = df['fqdn'].apply(lambda x: sum(c.isalpha() for c in x) / (len(x) + 1e-9))
-    features['num_uppercase'] = df['fqdn'].apply(lambda x: sum(1 for c in x if c.isupper()))
-    features['uppercase_ratio'] = df['fqdn'].apply(lambda x: sum(1 for c in x if c.isupper()) / (len(x) + 1e-9))
-    features['num_vowel_clusters'] = df['fqdn'].apply(lambda x: len([grp for grp in re.findall(r'[aeiou]+', x.lower()) if grp]))
-    features['num_consonant_clusters'] = df['fqdn'].apply(lambda x: len([grp for grp in re.findall(r'[bcdfghjklmnpqrstvwxyz]+', x.lower()) if grp]))
-    features['has_ip'] = df['fqdn'].apply(lambda x: 1 if re.match(r'^(\d{1,3}\.){3}\d{1,3}$', x) else 0)
-    features['ratio_special_chars'] = df['fqdn'].apply(lambda x: sum(not c.isalnum() for c in x) / (len(x) + 1e-9))
+    features['num_uppercase'] = df['fqdn'].str.count(r'[A-Z]') #.apply(lambda x: sum(1 for c in x if c.isupper()))
+    features['uppercase_ratio'] = features['num_uppercase'] / (features['fqdn_length'] + 1e-9)
+    features['num_vowel_clusters'] = df['fqdn'].str.findall(r'[aeiou]+').str.len()
+    features['num_consonant_clusters'] = df['fqdn'].str.findall(r'[bcdfghjklmnpqrstvwxyz]+').str.len()
+    features['has_ip'] = df['fqdn'].str.match(r'^(\d{1,3}\.){3}\d{1,3}$').astype(int)
+    features['ratio_special_chars'] = features['num_non_alphanumeric'] / (features['fqdn_length'] + 1e-9)
     features['avg_token_length'] = df['fqdn'].apply(lambda x: np.mean([len(token) for token in x.split('.')]) if x.split('.') else 0)
-    features['token_count'] = df['fqdn'].apply(lambda x: len(x.split('.')))
+    features['token_count'] = df['fqdn'].str.split(r'\.').str.len()
     features['dot_position_variance'] = df['fqdn'].apply(lambda x: np.var([i for i, c in enumerate(x) if c == '.']) / (len(x) + 1e-9) if '.' in x else 0)
     features['unique_alphanumeric'] = df['fqdn'].apply(lambda x: len(set(c for c in x if c.isalnum())))
     features['vowel_proportion'] = df['fqdn'].apply(lambda x: sum(c in "aeiou" for c in x.lower()) / (len(x) + 1e-9))
     features['consonant_proportion'] = df['fqdn'].apply(lambda x: sum(c.isalpha() and c.lower() not in "aeiou" for c in x) / (len(x) + 1e-9))
     features['unique_special_chars'] = df['fqdn'].apply(lambda x: len(set(c for c in x if not c.isalnum())))
-    features['starts_with_www'] = df['fqdn'].apply(lambda x: 1 if x.startswith("www.") else 0)
-    features['ends_with_com'] = df['fqdn'].apply(lambda x: 1 if x.endswith(".com") else 0)
-    features['ends_with_org'] = df['fqdn'].apply(lambda x: 1 if x.endswith(".org") else 0)
-    features['ends_with_net'] = df['fqdn'].apply(lambda x: 1 if x.endswith(".net") else 0)
-    features['starts_with_letter'] = df['fqdn'].apply(lambda x: 1 if x and x[0].isalpha() else 0)
-    features['ends_with_letter'] = df['fqdn'].apply(lambda x: 1 if x and x[-1].isalpha() else 0)
+    features['starts_with_www'] = df['fqdn'].str.startswith("www.").astype(int)
+    features['ends_with_com'] = df['fqdn'].str.endswith(".com").astype(int)
+    features['ends_with_org'] = df['fqdn'].str.endswith(".org").astype(int)
+    features['ends_with_net'] = df['fqdn'].str.endswith(".net").astype(int)
+    features['starts_with_letter'] = df['fqdn'].str[0].str.isalpha().fillna(False).astype(int)
+    features['ends_with_letter'] = df['fqdn'].str[-1].str.isalpha().fillna(False).astype(int)
     # New feature to check for punycode in FQDN
-    features['contains_punycode'] = df['fqdn'].apply(lambda x: 1 if "xn--" in x else 0)
+    features['contains_punycode'] = df['fqdn'].str.contains(r'xn--').astype(int)
     features['tld_starts_with_vowel'] = features['tld'].apply(lambda x: 1 if x and x[0].lower() in "aeiou" else 0)
     features['sld_starts_with_vowel'] = features['sld'].apply(lambda x: 1 if x and x[0].lower() in "aeiou" else 0)
-    features['subdomain_contains_www'] = features['subdomain'].apply(lambda x: 1 if "www" in x else 0)
+    features['subdomain_contains_www'] = features['subdomain'].str.contains(r'www').astype(int)
     features['std_token_length'] = df['fqdn'].apply(lambda x: np.std([len(token) for token in x.split('.')]) if x.split('.') else 0)
     features['max_token_length'] = df['fqdn'].apply(lambda x: max([len(token) for token in x.split('.')]) if x.split('.') else 0)
     features['min_token_length'] = df['fqdn'].apply(lambda x: min([len(token) for token in x.split('.')]) if x.split('.') else 0)
     features['contains_numeric_only_token'] = df['fqdn'].apply(lambda x: 1 if any(token.isdigit() for token in x.split('.')) else 0)
-    features['count_numeric_tokens'] = df['fqdn'].apply(lambda x: sum(1 for token in x.split('.') if token.isdigit()))
-    features['count_long_tokens'] = df['fqdn'].apply(lambda x: sum(1 for token in x.split('.') if len(token) > 7))
-    features['count_hyphen_tokens'] = df['fqdn'].apply(lambda x: sum(1 for token in x.split('.') if '-' in token))
+    features['count_numeric_tokens'] = df['fqdn'].str.split(r'\.').apply(lambda tokens: sum(token.isdigit() for token in tokens)) # Use .str.split for consistent tokenization
+    features['count_long_tokens'] = df['fqdn'].str.split(r'\.').apply(lambda tokens: sum(len(token) > 7 for token in tokens))
+    features['count_hyphen_tokens'] = df['fqdn'].str.split(r'\.').apply(lambda tokens: sum('-' in token for token in tokens))
     features['vowel_to_consonant_transitions'] = df['fqdn'].apply(lambda x: sum(1 for i in range(len(x) - 1) if (x[i] in 'aeiou' and x[i+1] not in 'aeiou' and x[i+1].isalpha()) or (x[i] not in 'aeiou' and x[i].isalpha() and x[i+1] in 'aeiou')))
     features['consonant_to_vowel_transitions'] = df['fqdn'].apply(lambda x: sum(1 for i in range(len(x) - 1) if (x[i] not in 'aeiou' and x[i].isalpha() and x[i+1] in 'aeiou') or (x[i] in 'aeiou' and x[i+1] not in 'aeiou' and x[i+1].isalpha())))
     features['letter_to_digit_transitions'] = df['fqdn'].apply(lambda x: sum(1 for i in range(len(x) - 1) if (x[i].isalpha() and x[i+1].isdigit()) or (x[i].isdigit() and x[i+1].isalpha())))
@@ -230,22 +239,22 @@ def feature_engineering(df):
     features['longest_consonant_cluster'] = df['fqdn'].apply(lambda x: max((len(cluster) for cluster in re.findall(r'[bcdfghjklmnpqrstvwxyz]+', x.lower())), default=0))
     features['first_char_type'] = df['fqdn'].apply(lambda x: 1 if x[0].isdigit() else (2 if x[0].isalpha() else 3) if x else 0)
     features['last_char_type'] = df['fqdn'].apply(lambda x: 1 if x[-1].isdigit() else (2 if x[-1].isalpha() else 3) if x else 0)
-    features['single_char_token_count'] =  df['fqdn'].apply(lambda x: sum(1 for token in x.split('.') if len(token) == 1))
-    features['two_char_token_count'] = df['fqdn'].apply(lambda x: sum(1 for token in x.split('.') if len(token) == 2))
-    features['three_char_token_count'] = df['fqdn'].apply(lambda x: sum(1 for token in x.split('.') if len(token) == 3))
-    features['four_char_token_count'] = df['fqdn'].apply(lambda x: sum(1 for token in x.split('.') if len(token) == 4))
-    features['five_char_token_count'] = df['fqdn'].apply(lambda x: sum(1 for token in x.split('.') if len(token) == 5))
+    features['single_char_token_count'] =  df['fqdn'].str.split(r'\.').apply(lambda tokens: sum(len(token) == 1 for token in tokens))
+    features['two_char_token_count'] = df['fqdn'].str.split(r'\.').apply(lambda tokens: sum(len(token) == 2 for token in tokens))
+    features['three_char_token_count'] = df['fqdn'].str.split(r'\.').apply(lambda tokens: sum(len(token) == 3 for token in tokens))
+    features['four_char_token_count'] = df['fqdn'].str.split(r'\.').apply(lambda tokens: sum(len(token) == 4 for token in tokens))
+    features['five_char_token_count'] = df['fqdn'].str.split(r'\.').apply(lambda tokens: sum(len(token) == 5 for token in tokens))
     features['tld_entropy'] = features['tld'].apply(calculate_entropy)
     features['sld_to_tld_length_ratio'] = features['sld_length'] / (features['tld_length'] + 1e-9)
     features['subdomain_to_sld_length_ratio'] = features['subdomain_length'] / (features['sld_length'] + 1e-9)
-    features['vowel_count_in_sld'] = features['sld'].apply(lambda x: sum(1 for char in x if char in "aeiou"))
-    features['consonant_count_in_sld'] = features['sld'].apply(lambda x: sum(1 for char in x if char in "bcdfghjklmnpqrstvwxyz"))
-    features['digit_count_in_sld'] = features['sld'].apply(lambda x: sum(c.isdigit() for c in x))
-    features['special_char_count_in_sld'] = features['sld'].apply(lambda x: sum(not c.isalnum() for c in x))
-    features['vowel_count_in_subdomain'] = features['subdomain'].apply(lambda x: sum(1 for char in x if char in "aeiou"))
-    features['consonant_count_in_subdomain'] = features['subdomain'].apply(lambda x: sum(1 for char in x if char in "bcdfghjklmnpqrstvwxyz"))
-    features['digit_count_in_subdomain'] = features['subdomain'].apply(lambda x: sum(c.isdigit() for c in x))
-    features['special_char_count_in_subdomain'] = features['subdomain'].apply(lambda x: sum(not c.isalnum() for c in x))
+    features['vowel_count_in_sld'] = features['sld'].str.count(r'[aeiou]')
+    features['consonant_count_in_sld'] = features['sld'].str.count(r'[bcdfghjklmnpqrstvwxyz]')
+    features['digit_count_in_sld'] = features['sld'].str.count(r'\d')
+    features['special_char_count_in_sld'] = features['sld'].str.count(r'[^a-zA-Z0-9]')
+    features['vowel_count_in_subdomain'] = features['subdomain'].str.count(r'[aeiou]')
+    features['consonant_count_in_subdomain'] = features['subdomain'].str.count(r'[bcdfghjklmnpqrstvwxyz]')
+    features['digit_count_in_subdomain'] = features['subdomain'].str.count(r'\d')
+    features['special_char_count_in_subdomain'] = features['subdomain'].str.count(r'[^a-zA-Z0-9]')
 
     # Corrected ratio calculations using np.where
     features['ratio_long_tokens'] = np.where(features['token_count'] > 0, features['count_long_tokens'] / features['token_count'], 0)
@@ -267,7 +276,7 @@ def feature_engineering(df):
     # Features based on the presence of special keywords (beyond "www")
     keywords = ['login', 'account', 'secure', 'admin', 'mail', 'webmail', 'server', 'payment', 'bank', 'signin']
     for keyword in keywords:
-        features[f'has_{keyword}'] = df['fqdn'].apply(lambda x: 1 if keyword in x else 0)
+        features[f'has_{keyword}'] = df['fqdn'].str.contains(keyword, regex=False).astype(int)  # Use str.contains and regex=False
 
 
     # Position of first/last digit/letter
@@ -285,7 +294,7 @@ def feature_engineering(df):
     # Add new feature: lookup malicious score from TLDs
     tld_scores = load_tld_scores()
     features['tld_malicious_score'] = df['fqdn'].apply(
-        lambda fqdn: tld_scores.get("." + tldextract.extract(fqdn).suffix, 0)
+        lambda fqdn: tld_scores.get('.' + tldextract.extract(fqdn).suffix, 0)  # Use the dict.get() method
     )
 
     # [NEW] 10 additional features for spotting goodnesses or badnesses
@@ -319,7 +328,7 @@ def feature_engineering(df):
     features['token_length_entropy'] = df['fqdn'].apply(token_length_entropy)
     
     # Feature: punycode_count (number of occurrences of 'xn--')
-    features['punycode_count'] = df['fqdn'].apply(lambda x: x.count('xn--'))
+    features['punycode_count'] = df['fqdn'].str.count(r'xn--')
     
     # Feature: bigram_entropy (entropy of character bigrams in the fqdn)
     def bigram_entropy(x):
@@ -412,7 +421,7 @@ def evaluate_model(test_data, model, vectorizer, feature_names, scale_data, use_
     mcc = matthews_corrcoef(y_test, y_pred)
 
     # --- Output Results (Rich Table) ---
-    table = Table(show_header=True, header_style="bold magenta")
+    table = Table(show_header=True, header_style="bold magenta", box=box.ROUNDED)
     table.add_column("Metric")
     table.add_column("Value")
     table.add_row("Accuracy", f"{accuracy:.4f}")
@@ -426,55 +435,55 @@ def evaluate_model(test_data, model, vectorizer, feature_names, scale_data, use_
     table.add_row("MCC", f"{mcc:.4f}")
     console.print(table)
 
-    console.print("\n[bold]Confusion Matrix:[/bold]")
-    console.print(conf_matrix)
+    # --- Confusion Matrix and Classification Report ---
+    console.print(Panel(f"{conf_matrix}", title="Confusion Matrix", box=box.ROUNDED))
+    console.print(Panel(report, title="Classification Report", box=box.ROUNDED))
 
-    console.print("\n[bold]Classification Report:[/bold]")
-    console.print(report)
-
-    # --- Model Settings and Hyperparameters ---
-    console.print("\n[bold]Model Settings:[/bold]")
-    console.print(f"  Model: {model_name}")
-    console.print(f"  Best Hyperparameters: {best_params}")
-    console.print(f"  Scaling: {scale_data}")
-    console.print(f"  Quantile Transform: {use_quantile_transform}")
-    console.print(f"  Vectorizer: {type(vectorizer).__name__}")
-    console.print(f"    N-gram Range: {vectorizer.ngram_range}")
-    console.print(f"    Analyzer: {vectorizer.analyzer}")
+    # --- Model Settings ---
+    settings_table = Table(show_header=False, box=box.ROUNDED)
+    settings_table.add_row("Model", f"{model_name}")
+    settings_table.add_row("Best Hyperparameters", f"{best_params}")
+    settings_table.add_row("Scaling", f"{scale_data}")
+    settings_table.add_row("Quantile Transform", f"{use_quantile_transform}")
+    settings_table.add_row("Vectorizer", f"{type(vectorizer).__name__}")
+    settings_table.add_row("N-gram Range", f"{vectorizer.ngram_range}")
+    settings_table.add_row("Analyzer", f"{vectorizer.analyzer}")
+    console.print(Panel(settings_table, title="Model Settings", box=box.ROUNDED))
 
     # --- Top 10 Feature Importances ---
-
+    # Handle feature importances more robustly, checking for both pipeline and direct model cases.
     if hasattr(model, 'named_steps') and "model" in model.named_steps:
-      if hasattr(model.named_steps["model"], 'feature_importances_'):
-        try:
-          feature_importances = model.named_steps["model"].feature_importances_
-          fi_df = pd.DataFrame({'Feature': feature_names, 'Importance': feature_importances})
-          fi_df = fi_df.sort_values(by='Importance', ascending=False)
-
-          console.print("\n[bold]Top 10 Feature Importances:[/bold]")
-          table = Table(show_header=True, header_style="bold cyan")
-          table.add_column("Feature")
-          table.add_column("Importance", justify="right")
-          for _, row in fi_df.head(10).iterrows():
-              table.add_row(row['Feature'], f"{row['Importance']:.4f}")
-          console.print(table)
-        except Exception as e:
-            console.print(f"Could not determine feature importances: {e}")
+        model_step = model.named_steps["model"]
+        if hasattr(model_step, 'feature_importances_'):
+            feature_importances = model_step.feature_importances_
+        elif hasattr(model_step, 'coef_'):  # For Logistic Regression
+            feature_importances = np.abs(model_step.coef_[0]) # Absolute values
+        else:
+            feature_importances = None
     elif hasattr(model, 'feature_importances_'):
-      #For cases where the model is not in a pipeline
-      try:
         feature_importances = model.feature_importances_
-        fi_df = pd.DataFrame({'Feature': feature_names, 'Importance': feature_importances})
-        fi_df = fi_df.sort_values(by='Importance', ascending=False)
-        console.print("\n[bold]Top 10 Feature Importances:[/bold]")
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Feature")
-        table.add_column("Importance", justify="right")
-        for _, row in fi_df.head(10).iterrows():
-            table.add_row(row['Feature'], f"{row['Importance']:.4f}")
-        console.print(table)
-      except Exception as e:
-        console.print("Could not determine feature importances")
+    elif hasattr(model, 'coef_'):
+        feature_importances = np.abs(model.coef_[0])
+    else:
+        feature_importances = None
+
+    if feature_importances is not None:
+        try:
+            fi_df = pd.DataFrame({'Feature': feature_names, 'Importance': feature_importances})
+            fi_df = fi_df.sort_values(by='Importance', ascending=False)
+
+            table_fi = Table(show_header=True, header_style="bold cyan", box=box.ROUNDED)
+            table_fi.add_column("Feature")
+            table_fi.add_column("Importance", justify="right")
+            for _, row in fi_df.head(10).iterrows():
+                table_fi.add_row(row['Feature'], f"{row['Importance']:.4f}")
+            console.print(Panel(table_fi, title="Top 10 Feature Importances", box=box.ROUNDED))
+        except Exception as e:
+            console.print(f"[red]Could not determine feature importances: {e}[/red]")
+    else:
+        console.print("[yellow]Feature importances not available for this model.[/yellow]")
+
+
     # --- Visualizations ---
     plt.figure(figsize=(6, 5))
     sns.heatmap(conf_matrix, annot=True, fmt="d", cmap="Blues", cbar=False,
@@ -486,7 +495,7 @@ def evaluate_model(test_data, model, vectorizer, feature_names, scale_data, use_
     plt.savefig(f"{output_dir}/confusion_matrix.png")
     plt.close()
 
-    fpr, tpr, thresholds = roc_curve(y_test, y_prob)
+    fpr, tpr, _ = roc_curve(y_test, y_prob)  # Removed unused thresholds
     plt.figure(figsize=(6, 5))
     plt.plot(fpr, tpr, label=f'ROC Curve (AUC = {auc:.2f})')
     plt.plot([0, 1], [0, 1], 'k--')
@@ -498,7 +507,7 @@ def evaluate_model(test_data, model, vectorizer, feature_names, scale_data, use_
     plt.savefig(f"{output_dir}/roc_curve.png")
     plt.close()
 
-    precision, recall, _ = precision_recall_curve(y_test, y_prob)
+    precision, recall, _ = precision_recall_curve(y_test, y_prob) # Removed unused thresholds
     plt.figure(figsize=(6, 5))
     plt.plot(recall, precision, label=f'Precision-Recall Curve (AP = {ap_score:.2f})')
     plt.xlabel('Recall')
@@ -509,21 +518,16 @@ def evaluate_model(test_data, model, vectorizer, feature_names, scale_data, use_
     plt.savefig(f"{output_dir}/precision_recall_curve.png")
     plt.close()
 
-    if hasattr(model, 'named_steps') and "model" in model.named_steps:
-      if hasattr(model.named_steps["model"], 'feature_importances_'):
-        plt.figure(figsize=(8, 6))
-        sns.barplot(x='Importance', y='Feature', data=fi_df.head(10), orient='h')
-        plt.title('Top 10 Feature Importances')
-        plt.tight_layout()
-        plt.savefig(f"{output_dir}/feature_importance.png")
-        plt.close()
-    elif hasattr(model, 'feature_importances_'):
-      plt.figure(figsize=(8, 6))
-      sns.barplot(x='Importance', y='Feature', data=fi_df.head(10), orient='h')
-      plt.title('Top 10 Feature Importances')
-      plt.tight_layout()
-      plt.savefig(f"{output_dir}/feature_importance.png")
-      plt.close()
+    if feature_importances is not None:  # Only plot if importances are available
+        try:
+            plt.figure(figsize=(8, 6))
+            sns.barplot(x='Importance', y='Feature', data=fi_df.head(10), orient='h')
+            plt.title('Top 10 Feature Importances')
+            plt.tight_layout()
+            plt.savefig(f"{output_dir}/feature_importance.png")
+            plt.close()
+        except Exception as e:
+            console.print(f"[red]Error creating feature importance plot: {e}[/red]")
 
 
 def predict_fqdn(fqdn, model, vectorizer, feature_names, scale_data, use_quantile_transform):
@@ -647,14 +651,14 @@ def train_ensemble(train_data, vectorizer, scale_data, use_quantile_transform, u
           random_search.fit(pd.concat([X_train_text, X_train_engineered], axis=1), y_train)
 
           progress.update(task, advance=1, description=f"Tuning {model_name}...[green]Done![/green]")
-          return random_search.best_estimator_
+          return random_search.best_estimator_, random_search.best_params_ # Return best_params
 
-    best_rf = tune_model(rf_pipeline, param_grids['random_forest'], 'RandomForest')
-    best_gb = tune_model(gb_pipeline, param_grids['gradient_boosting'], 'GradientBoosting')
-    best_lr = tune_model(lr_pipeline, param_grids['logistic_regression'], 'LogisticRegression')
-    best_svm = tune_model(svm_pipeline, param_grids['svm'], 'SVM')
-    best_nb = tune_model(nb_pipeline, param_grids['naive_bayes'], 'NaiveBayes')
-    best_ab = tune_model(ab_pipeline, param_grids['adaboost'], 'AdaBoost')
+    best_rf, best_rf_params = tune_model(rf_pipeline, param_grids['random_forest'], 'RandomForest')
+    best_gb, best_gb_params = tune_model(gb_pipeline, param_grids['gradient_boosting'], 'GradientBoosting')
+    best_lr, best_lr_params = tune_model(lr_pipeline, param_grids['logistic_regression'], 'LogisticRegression')
+    best_svm, best_svm_params = tune_model(svm_pipeline, param_grids['svm'], 'SVM')
+    best_nb, best_nb_params = tune_model(nb_pipeline, param_grids['naive_bayes'], 'NaiveBayes')
+    best_ab, best_ab_params = tune_model(ab_pipeline, param_grids['adaboost'], 'AdaBoost')
 
     # --- Create Voting Classifier ---
     # Use named estimators from the tuned pipelines
@@ -685,15 +689,38 @@ def train_ensemble(train_data, vectorizer, scale_data, use_quantile_transform, u
 
     # --- Get Feature Names (after preprocessing and selection) ---
     #   (This is tricky with nested pipelines; we'll get an approximation)
+
     try:
-      feature_names = best_rf.named_steps['preprocessor'].get_feature_names_out()
-      selected_features = best_rf.named_steps['feature_selection'].get_support()
-      final_feature_names = feature_names[selected_features]
-    except:
-      final_feature_names = X_train_engineered.columns
+        # Attempt to get feature names from the preprocessor of the *first* estimator.
+        # This assumes all estimators use the same preprocessor.  A more robust
+        # approach might average feature importances across all estimators if they
+        # differed, but that's significantly more complex.
+        feature_names = estimators[0][1].named_steps['preprocessor'].get_feature_names_out()
+
+        # If feature selection is present in the *first* estimator, apply it.
+        if 'feature_selection' in estimators[0][1].named_steps:
+             selected_features = estimators[0][1].named_steps['feature_selection'].get_support()
+             feature_names = feature_names[selected_features]
+
+    except AttributeError:
+        # Fallback: Use engineered feature names if we can't get them from preprocessor.
+        feature_names = X_train_engineered.columns
+    except Exception as e:
+      console.print(f"[red]Error during feature name extraction: {e}[/red]")
+      feature_names = X_train_engineered.columns
+
+    # Collect best parameters for each model in the ensemble
+    ensemble_best_params = {
+        'rf': best_rf_params,
+        'gb': best_gb_params,
+        'lr': best_lr_params,
+        'svm': best_svm_params,
+        'nb': best_nb_params,
+        'ab': best_ab_params
+    }
 
 
-    return voting_clf, vectorizer, final_feature_names, {}  # No single best_params for VotingClassifier
+    return voting_clf, vectorizer, feature_names, ensemble_best_params
 
 
 def iterative_feature_selection(train_data, vectorizer, model_name, param_grid, scale_data, use_quantile_transform, use_smote, initial_features, num_iterations=5, scoring='roc_auc'):
@@ -701,8 +728,9 @@ def iterative_feature_selection(train_data, vectorizer, model_name, param_grid, 
 
     best_features = initial_features
     best_score = 0.0
-    best_model = None            # Added initialization to fix pylint issues
-    best_best_params = None      # Added initialization to fix pylint issues
+    best_model = None
+    best_best_params = None
+    best_feature_names = None  # Initialize
 
     for iteration in range(num_iterations):
         console.print(f"\n[bold]Iteration {iteration + 1}/{num_iterations}[/bold]")
@@ -726,18 +754,23 @@ def iterative_feature_selection(train_data, vectorizer, model_name, param_grid, 
             current_train_data, vectorizer, scale_data, use_quantile_transform, use_smote, param_grid
           )
 
-        # Get feature importances (handle pipelines and non-pipeline models)
+        # Get feature importances (handle pipelines and non-pipeline models, including coef_ for LogisticRegression)
         if hasattr(model, 'named_steps') and "model" in model.named_steps:
-            if hasattr(model.named_steps['model'], 'feature_importances_'):
-                importances = model.named_steps['model'].feature_importances_
+            model_step = model.named_steps['model']
+            if hasattr(model_step, 'feature_importances_'):
+                importances = model_step.feature_importances_
+            elif hasattr(model_step, 'coef_'):
+                importances = np.abs(model_step.coef_[0])  # Use absolute coefficients
             else:
-                console.print("Model does not have feature importances.")
-                return best_features, best_score, model, feature_names, best_params
-        elif hasattr(model, "feature_importances_"):
-          importances = model.feature_importances_
+                console.print("[yellow]Model does not have feature importances or coefficients.[/yellow]")
+                return best_features, best_score, best_model, best_feature_names, best_best_params
+        elif hasattr(model, 'feature_importances_'):
+            importances = model.feature_importances_
+        elif hasattr(model, 'coef_'):
+            importances = np.abs(model.coef_[0])
         else:
-            console.print("Model does not have feature importances.")
-            return best_features, best_score, model, feature_names, best_params
+            console.print("[yellow]Model does not have feature importances or coefficients.[/yellow]")
+            return best_features, best_score, best_model, best_feature_names, best_best_params
 
         # Create DataFrame for feature importances
         fi_df = pd.DataFrame({'Feature': feature_names, 'Importance': importances})
@@ -848,13 +881,17 @@ def train_model(train_data, vectorizer, model_name, param_grid, scale_data, use_
     best_model = random_search.best_estimator_
     best_params = random_search.best_params_
 
-    # Get feature names *after* preprocessing and feature selection
-
+    # Get feature names *after* preprocessing.  Feature selection, if part of
+    # the pipeline, will have already happened inside best_model.
     try:
-      feature_names = best_model.named_steps['preprocessor'].get_feature_names_out()
+        feature_names = best_model.named_steps['preprocessor'].get_feature_names_out()
+    except AttributeError:
+        # Fallback to the engineered feature names if preprocessor names aren't available
+        feature_names = X_train_engineered.columns
+    except Exception as e:
+        console.print(f"[red]Error getting feature names: {e}[/red]")
+        feature_names = X_train_engineered.columns  # Fallback
 
-    except:
-      feature_names =  X_train_engineered.columns # Fallback
 
     return best_model, vectorizer, feature_names, best_params
 
@@ -885,6 +922,21 @@ param_grids = {
 
 # --- Main ---
 
+def print_training_summary(config, features_count, features_sum_count):
+    # Print the training configuration table as before...
+    print(f"╭─────────── Training Summary ───────────╮")
+    print(f"│                                        │")
+    print(f"│ ┌────────────────────┬───────────────┐ │")
+    print(f"│ │ Model              │ {config['model']} │ │")
+    print(f"│ │ SMOTE              │ {config['smote']}         │ │")
+    print(f"│ │ Scaling            │ {config['scaling']}         │ │")
+    print(f"│ │ Quantile Transform │ {config['quantile_transform']}         │ │")
+    print(f"│ │ N-gram Range       │ {config['ngram_range']}           │ │")
+    print(f"│ │ Max Jobs           │ {config['max_jobs']}             │ │")
+    print(f"│ │ Feature Selection  │ {config['feature_selection']}         │ │")
+    print(f"│ │ Total Features     | {features_count}           │ │")
+    print(f"│ └────────────────────┴───────────────┘ │")
+    print(f"╰────────────────────────────────────────╯")
 
 def main():
     parser = argparse.ArgumentParser(description="FQDN Classifier", formatter_class=argparse.RawTextHelpFormatter)
@@ -959,34 +1011,37 @@ def main():
     
     from rich.panel import Panel
 
+    # Create TF-IDF vectorizer before model training
+    tfidf_vectorizer = TfidfVectorizer(analyzer='char', ngram_range=tuple(args.ngram_range))
+
     # --- Initial Feature Selection (before model training)---
     initial_features = [col for col in train_data.columns if col not in ['fqdn','label', 'tld','sld','subdomain']]
 
-    # Display enhanced training configuration summary
-    summary_table = Table(title="Training Configuration", show_header=False)
-    summary_table.add_row("Model", f"{args.model}")
-    summary_table.add_row("SMOTE", f"{args.smote}")
-    summary_table.add_row("Scaling", f"{args.scale}")
-    summary_table.add_row("Quantile Transform", f"{args.quantile_transform}")
-    summary_table.add_row("N-gram Range", f"{args.ngram_range[0]}-{args.ngram_range[1]}")
-    summary_table.add_row("Max Jobs", f"{args.max_jobs}")
-    summary_table.add_row("Feature Selection", f"{args.feature_selection}")
-    console.print(Panel(summary_table, title="[bold cyan]Training Summary[/bold cyan]", expand=False))
+    # Calculate features count and features sum count
+    features_count = len(initial_features)
+    features_sum_count = train_data[initial_features].sum().sum()
 
-    # TF-IDF Vectorizer setup (MOVED INSIDE main())
-    norm = None  # Default: no regularization
-    if args.l1:
-        norm = 'l1'
-    elif args.l2:
-        norm = 'l2'
+    # --- Calculate features count ---
+    features_count = len(initial_features)
 
-    tfidf_vectorizer = TfidfVectorizer(analyzer='char', ngram_range=(args.ngram_range[0], args.ngram_range[1]), norm=norm)
+    # Print training summary with features count
+    config = {
+        "model": args.model,
+        "smote": args.smote,
+        "scaling": args.scale,
+        "quantile_transform": args.quantile_transform,
+        "ngram_range": f"{args.ngram_range[0]}-{args.ngram_range[1]}",
+        "max_jobs": args.max_jobs,
+        "feature_selection": args.feature_selection
+    }
+
+    print_training_summary(config, features_count, features_sum_count)
 
     # --- Model Training/Ensembling ---
     if args.model != "ensemble":
         if args.feature_selection:
             # Iterative feature selection
-            best_features, best_score, model, feature_names, best_params = iterative_feature_selection(
+            best_features, best_score, best_model, best_feature_names, best_best_params = iterative_feature_selection(
                 train_data, tfidf_vectorizer, args.model, param_grids[args.model],
                 args.scale, args.quantile_transform, args.smote, initial_features,
                 num_iterations=args.num_iterations
@@ -999,7 +1054,7 @@ def main():
             )
             console.print(f"Best parameters for {args.model}: {best_params}")
             if feature_names is None:
-                feature_names = initial_features
+                feature_names = initial_features  # Ensure feature_names is always defined
     else:
         # Train Ensemble (VotingClassifier)
         model, vectorizer, feature_names, best_params = train_ensemble(
@@ -1009,8 +1064,13 @@ def main():
 
     # --- Model Saving (with timestamp) ---
     if args.save_model:
+        # If the given save path is relative, join it with the project directory.
+        if not os.path.isabs(args.save_model):
+            save_path = os.path.join("/Users/fab/GitHub/fqdn_model", args.save_model)
+        else:
+            save_path = args.save_model
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_filename = f"{args.save_model.split('.')[0]}_{timestamp}.pkl"
+        model_filename = f"{save_path.split('.')[0]}_{timestamp}.pkl"
         joblib.dump((model, tfidf_vectorizer, feature_names), model_filename)
         console.print(f"[green]Best model, vectorizer, and feature names saved to {model_filename}[/green]")
 
