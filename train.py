@@ -43,6 +43,7 @@ def load_data(blacklist_file, whitelist_file, skip_errors=False):
                                on_bad_lines=('skip' if skip_errors else 'error'))
         df_white['label'] = 0
         data = pd.concat([df_black, df_white], ignore_index=True)
+        data = data[data['fqdn'] != 'fqdn']  # Remove duplicate header rows if any
     except Exception as e:
         console.print(f"Error loading CSV files: {e}")
         sys.exit(1)
@@ -602,7 +603,7 @@ def iterative_feature_selection(train_data, vectorizer, model_name, param_grid, 
         current_train_data = train_data[best_features + ['fqdn','label']]
         # Crucially:  Apply numeric conversion *only* to the engineered features.
         engineered_cols = [col for col in current_train_data.columns if col not in ['fqdn', 'label']]
-        current_train_data[engineered_cols] = current_train_data[engineered_cols].apply(pd.to_numeric, errors='coerce').fillna(0)
+        current_train_data.loc[:, engineered_cols] = current_train_data[engineered_cols].apply(pd.to_numeric, errors='coerce').fillna(0)
 
 
 
