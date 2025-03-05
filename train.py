@@ -1,34 +1,53 @@
+"""
+FQDN classifier module.
+# pylint: disable=too-many-locals, too-many-statements, too-many-branches, line-too-long
+"""
+
+# Standard Library Imports
+import argparse
+import datetime
+import functools
+import os
+import re
 import sys
-import pandas as pd
-from sklearn.model_selection import train_test_split, RandomizedSearchCV, StratifiedKFold
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.preprocessing import StandardScaler, QuantileTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.compose import ColumnTransformer
-from sklearn.feature_selection import SelectFromModel
-from sklearn.metrics import roc_auc_score, accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, log_loss, classification_report, average_precision_score, brier_score_loss, matthews_corrcoef, precision_recall_curve, roc_curve
-import numpy as np
+import warnings
+from collections import Counter
+
+# Third-Party Library Imports
 import joblib
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import tldextract  # Keep this separate since it's less common
+from rich.console import Console
+from rich.progress import (Progress, SpinnerColumn, TextColumn,
+                           TimeElapsedColumn)
+from rich.table import Table
+
+# scikit-learn (sklearn) Imports - Grouped by Submodule
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import (AdaBoostClassifier, GradientBoostingClassifier,
+                              RandomForestClassifier, VotingClassifier)
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_selection import SelectFromModel
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (accuracy_score, average_precision_score,
+                             brier_score_loss, classification_report,
+                             confusion_matrix, f1_score, log_loss,
+                             matthews_corrcoef, precision_recall_curve,
+                             precision_score, recall_score, roc_auc_score,
+                             roc_curve)
+from sklearn.model_selection import (RandomizedSearchCV, StratifiedKFold,
+                                       train_test_split)
+from sklearn.naive_bayes import GaussianNB
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import QuantileTransformer, StandardScaler
+from sklearn.svm import SVC
+
+# imbalanced-learn (imblearn) Imports
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline as ImbPipeline
-import datetime
-import argparse
-import os
-from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn, TextColumn
-from rich.table import Table
-import warnings
-from sklearn.naive_bayes import GaussianNB
-from sklearn.svm import SVC
-from sklearn.ensemble import AdaBoostClassifier
-import re
-import matplotlib.pyplot as plt
-import seaborn as sns
-import tldextract
-from collections import Counter
-import functools
 
 warnings.filterwarnings("ignore", category=UserWarning, module="sklearn.feature_extraction.text")
 
@@ -662,6 +681,8 @@ def iterative_feature_selection(train_data, vectorizer, model_name, param_grid, 
 
     best_features = initial_features
     best_score = 0.0
+    best_model = None            # Added initialization to fix pylint issues
+    best_best_params = None      # Added initialization to fix pylint issues
 
     for iteration in range(num_iterations):
         console.print(f"\n[bold]Iteration {iteration + 1}/{num_iterations}[/bold]")
