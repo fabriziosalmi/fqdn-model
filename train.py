@@ -66,6 +66,16 @@ def load_tld_scores(file_path='/Users/fab/GitHub/fqdn_model/tlds.csv'):
         print(f"Error loading TLD scores: {e}")
         return {}
 
+@functools.lru_cache(maxsize=1)
+def load_word_scores(file_path='/Users/fab/GitHub/fqdn_model/words.csv'):
+    import pandas as pd
+    try:
+        df = pd.read_csv(file_path)
+        return {row['word']: float(row['score']) for _, row in df.iterrows()}
+    except Exception as e:
+        print(f"Error loading word scores: {e}")
+        return {}
+
 def load_data(blacklist_file, whitelist_file, skip_errors=False):
     try:
         df_black = pd.read_csv(blacklist_file, header=None, names=["fqdn"],
@@ -324,6 +334,16 @@ def feature_engineering(df):
     # Feature: is_subdomain_empty (1 if subdomain is empty; 0 otherwise)
     features['is_subdomain_empty'] = features['subdomain'].apply(lambda x: 1 if x == '' else 0)
     
+    # Add new feature: lookup word malicious score from words.csv
+    word_scores = load_word_scores()
+    def compute_word_score(fqdn):
+        words = re.findall(r'[a-z]+', fqdn.lower())
+        if not words:
+            return 0
+        scores = [word_scores.get(word, 0) for word in words]
+        return sum(scores) / len(scores)
+    features['word_malicious_score'] = df['fqdn'].apply(compute_word_score)
+
     # Create a new DataFrame from the features dictionary
     new_features_df = pd.DataFrame(features)
 
