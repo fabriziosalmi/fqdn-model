@@ -4,7 +4,7 @@
 [![Python Version](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![Dependencies](https://img.shields.io/badge/dependencies-up%20to%20date-brightgreen.svg)](https://requires.io/github/fabriziosalmi/fqdn-model/requirements)
 
-This project implements a machine learning-based classifier to identify malicious Fully Qualified Domain Names (FQDNs). It leverages extensive feature engineering, TF-IDF vectorization, and a variety of machine learning models, including ensemble methods, to achieve high accuracy in distinguishing between benign and malicious domains. 
+This project implements a machine learning-based classifier to identify malicious Fully Qualified Domain Names (FQDNs). It leverages extensive feature engineering, TF-IDF vectorization, and a variety of machine learning models, including ensemble methods, to achieve high accuracy in distinguishing between benign and malicious domains. Its generated output can be used by another model to improve detection accuracy by using a set of net tools.
 
 [![asciicast](https://asciinema.org/a/jUVHCTLr1fBSyRInNHbZ7lbFB.svg)](https://asciinema.org/a/jUVHCTLr1fBSyRInNHbZ7lbFB)
 
