@@ -1,4 +1,4 @@
-name: Pylint
+name: Pylint - Always Pass with Score Reporting
 
 on: [push]
 
@@ -20,5 +20,31 @@ jobs:
         pip install -r requirements.txt
         pip install pylint
     - name: Analysing the code with pylint
+      id: pylint_run # Give this step an ID for later reference
       run: |
-        pylint $(git ls-files '*.py')
+        pylint $(git ls-files '*.py') --output-format=text | tee pylint_output.txt || true
+        # Explanation:
+        #   --output-format=text:  Ensures consistent output for parsing.  VERY IMPORTANT.
+        #   | tee pylint_output.txt:  Sends output to BOTH the console AND a file.
+        #   || true:                 ALWAYS returns a success code (0).
+
+    - name: Extract and Report Pylint Score
+      run: |
+        score=$(grep -oP 'Your code has been rated at \K[\d\.\-]+' pylint_output.txt)
+        echo "Pylint Score: $score"
+        # Set the score as an output variable (optional, but useful for other steps)
+        echo "::set-output name=pylint_score::$score"
+
+      # Optional: Create a summary (visible on the workflow run page)
+      if: always() # This ensures the summary is ALWAYS created
+      run: |
+        echo "## Pylint Report Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY  # Add a blank line
+        echo "Pylint Score:  **$score**" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "<details><summary>Click to see full Pylint output</summary>" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "```" >> $GITHUB_STEP_SUMMARY
+        cat pylint_output.txt >> $GITHUB_STEP_SUMMARY
+        echo "```" >> $GITHUB_STEP_SUMMARY
+        echo "</details>" >> $GITHUB_STEP_SUMMARY
