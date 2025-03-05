@@ -921,16 +921,15 @@ def main():
     # --- Initial Feature Selection (before model training)---
     initial_features = [col for col in train_data.columns if col not in ['fqdn','label', 'tld','sld','subdomain']]
 
-    # Display training configuration summary
-    summary_table = Table(title="Training Configuration", show_header=False)
-    summary_table.add_row("Model", f"{args.model}")
-    initial_features = [col for col in train_data.columns if col not in ['fqdn','label', 'tld','sld','subdomain']]
-
-    # Display training configuration summary
+    # Display enhanced training configuration summary
     summary_table = Table(title="Training Configuration", show_header=False)
     summary_table.add_row("Model", f"{args.model}")
     summary_table.add_row("SMOTE", f"{args.smote}")
+    summary_table.add_row("Scaling", f"{args.scale}")
+    summary_table.add_row("Quantile Transform", f"{args.quantile_transform}")
     summary_table.add_row("N-gram Range", f"{args.ngram_range[0]}-{args.ngram_range[1]}")
+    summary_table.add_row("Max Jobs", f"{args.max_jobs}")
+    summary_table.add_row("Feature Selection", f"{args.feature_selection}")
     console.print(Panel(summary_table, title="[bold cyan]Training Summary[/bold cyan]", expand=False))
 
     # TF-IDF Vectorizer setup (MOVED INSIDE main())
