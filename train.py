@@ -28,11 +28,24 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import tldextract
 from collections import Counter
+import functools
 
 warnings.filterwarnings("ignore", category=UserWarning, module="sklearn.feature_extraction.text")
 
 # --- Data Loading and Preprocessing ---
 console = Console()  # Initialize console here
+
+# New helper function to load TLD scores
+@functools.lru_cache(maxsize=1)
+def load_tld_scores(file_path='/Users/fab/GitHub/fqdn_model/tlds.csv'):
+    import pandas as pd
+    try:
+        df = pd.read_csv(file_path)
+        # Ensure keys have a leading dot
+        return {row['tld']: float(row['score']) for _, row in df.iterrows()}
+    except Exception as e:
+        print(f"Error loading TLD scores: {e}")
+        return {}
 
 def load_data(blacklist_file, whitelist_file, skip_errors=False):
     try:
@@ -164,6 +177,8 @@ def feature_engineering(df):
     features['ends_with_net'] = df['fqdn'].apply(lambda x: 1 if x.endswith(".net") else 0)
     features['starts_with_letter'] = df['fqdn'].apply(lambda x: 1 if x and x[0].isalpha() else 0)
     features['ends_with_letter'] = df['fqdn'].apply(lambda x: 1 if x and x[-1].isalpha() else 0)
+    # New feature to check for punycode in FQDN
+    features['contains_punycode'] = df['fqdn'].apply(lambda x: 1 if "xn--" in x else 0)
     features['tld_starts_with_vowel'] = features['tld'].apply(lambda x: 1 if x and x[0].lower() in "aeiou" else 0)
     features['sld_starts_with_vowel'] = features['sld'].apply(lambda x: 1 if x and x[0].lower() in "aeiou" else 0)
     features['subdomain_contains_www'] = features['subdomain'].apply(lambda x: 1 if "www" in x else 0)
@@ -237,6 +252,12 @@ def feature_engineering(df):
 
     # Ratio of (vowels + digits) to length
     features['vowel_digit_ratio'] = df['fqdn'].apply(lambda x: (sum(c in "aeiou" for c in x.lower()) + sum(c.isdigit() for c in x) ) / (len(x) + 1e-9))
+
+    # Add new feature: lookup malicious score from TLDs
+    tld_scores = load_tld_scores()
+    features['tld_malicious_score'] = df['fqdn'].apply(
+        lambda fqdn: tld_scores.get("." + tldextract.extract(fqdn).suffix, 0)
+    )
 
     # Create a new DataFrame from the features dictionary
     new_features_df = pd.DataFrame(features)
