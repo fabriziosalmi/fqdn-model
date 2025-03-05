@@ -6,6 +6,8 @@
 
 This project implements a machine learning-based classifier to identify malicious Fully Qualified Domain Names (FQDNs). It leverages extensive feature engineering, TF-IDF vectorization, and a variety of machine learning models, including ensemble methods, to achieve high accuracy in distinguishing between benign and malicious domains. This project use a good combination of character-level analysis, lexical feature and domain knowledge!
 
+[![asciicast](https://asciinema.org/a/jUVHCTLr1fBSyRInNHbZ7lbFB.svg)](https://asciinema.org/a/jUVHCTLr1fBSyRInNHbZ7lbFB)
+
 ## Table of Contents
 
 *   [Demo](#demo)
