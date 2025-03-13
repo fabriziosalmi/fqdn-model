@@ -13,7 +13,7 @@ This repository contains a Python-based FQDN (Fully Qualified Domain Name) class
 
 ![screenshot](https://github.com/fabriziosalmi/fqdn-model/blob/main/screenshot.png?raw=true)
 
-**Predict FQDN** by using the generated model (68MB size , the most accurate) or the compressed model (11MB size, light and fast!|)
+**Predict FQDN** by using the generated model (60MB size , the most accurate) or the compressed model (10MB size, light and fast!|)
 
 ![screenshot](https://github.com/fabriziosalmi/fqdn-model/blob/main/screenshot2.png?raw=true)
 
