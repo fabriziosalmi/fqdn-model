@@ -18,6 +18,7 @@ This repository contains a Python-based FQDN (Fully Qualified Domain Name) class
 ![screenshot](https://github.com/fabriziosalmi/fqdn-model/blob/main/screenshot2.png?raw=true)
 
 **Web UI** detect domains via web interface
+
 ![screenshot](https://github.com/fabriziosalmi/fqdn-model/blob/main/screenshot3.png?raw=true)
 
 
