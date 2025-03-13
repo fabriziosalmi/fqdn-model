@@ -220,6 +220,11 @@ This project provides a reliable and easy-to-use tool for classifying FQDNs. It 
     }
     ```
 
+4. Web UI
+   
+> [!NOTE]
+> You can also interact with the API by using the practical web interface at `http://127.0.0.1:5000/`
+
 ## Data Format
 
 The training data consists of two text files:
