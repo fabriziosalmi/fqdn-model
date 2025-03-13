@@ -2,59 +2,18 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, roc_auc_score, precision_score, recall_score, f1_score
 import re
 import tldextract
 import joblib
 
-# Function to extract features from FQDNs
-def extract_features(fqdn):
-    # Extract domain parts using tldextract
-    ext = tldextract.extract(fqdn)
-    subdomain = ext.subdomain
-    domain = ext.domain
-    suffix = ext.suffix
-    
-    # Basic features
-    features = {
-        'fqdn_length': len(fqdn),
-        'domain_length': len(domain),
-        'subdomain_length': len(subdomain),
-        'suffix_length': len(suffix),
-        'num_dots': fqdn.count('.'),
-        'num_hyphens': fqdn.count('-'),
-        'num_underscores': fqdn.count('_'),
-        'num_digits': sum(c.isdigit() for c in fqdn),
-        'num_subdomains': len(subdomain.split('.')) if subdomain else 0,
-        'has_www': 1 if 'www' in fqdn else 0,
-        'has_subdomain': 1 if subdomain else 0,
-    }
-    
-    # Character distribution features
-    for char in 'abcdefghijklmnopqrstuvwxyz0123456789-_.':
-        features[f'char_{char}'] = fqdn.lower().count(char) / len(fqdn) if len(fqdn) > 0 else 0
-    
-    # Entropy calculation (measure of randomness in the domain name)
-    char_count = {}
-    for char in fqdn.lower():
-        if char in char_count:
-            char_count[char] += 1
-        else:
-            char_count[char] = 1
-    
-    entropy = 0
-    for count in char_count.values():
-        prob = count / len(fqdn)
-        entropy -= prob * np.log2(prob)
-    
-    features['entropy'] = entropy
-    
-    # Additional features
-    features['consonant_ratio'] = sum(c.lower() in 'bcdfghjklmnpqrstvwxyz' for c in fqdn) / len(fqdn) if len(fqdn) > 0 else 0
-    features['vowel_ratio'] = sum(c.lower() in 'aeiou' for c in fqdn) / len(fqdn) if len(fqdn) > 0 else 0
-    features['digit_ratio'] = features['num_digits'] / len(fqdn) if len(fqdn) > 0 else 0
-    
-    return features
+from feature_engineering import extract_features
+
+# Added rich for improved visualization
+from rich.console import Console
+from rich.table import Table
+
+console = Console()
 
 # Load data
 def load_data(whitelist_path, blacklist_path):
@@ -108,12 +67,38 @@ def train_model(X, y):
     accuracy = accuracy_score(y_test, y_pred)
     conf_matrix = confusion_matrix(y_test, y_pred)
     report = classification_report(y_test, y_pred)
+    roc_auc = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
     
-    print(f"Accuracy: {accuracy:.4f}")
-    print("Confusion Matrix:")
-    print(conf_matrix)
-    print("Classification Report:")
-    print(report)
+    # Additional metrics
+    precision = precision_score(y_test, y_pred)
+    recall = recall_score(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred)
+    
+    console.print(f"Accuracy: {accuracy:.4f}", style="bold blue")
+    console.print(f"ROC AUC: {roc_auc:.4f}", style="bold blue")
+    
+    # Updated confusion matrix table with consistent colors
+    table = Table(title="Confusion Matrix", style="blue")
+    table.add_column("", justify="center")
+    table.add_column("Predicted 0", justify="center")
+    table.add_column("Predicted 1", justify="center")
+    table.add_row("Actual 0", str(conf_matrix[0,0]), str(conf_matrix[0,1]))
+    table.add_row("Actual 1", str(conf_matrix[1,0]), str(conf_matrix[1,1]))
+    console.print(table)
+    
+    console.print("Classification Report:", style="bold blue")
+    console.print(report, style="blue")
+    
+    # Display additional metrics in a summary table
+    metrics_table = Table(title="Metrics Summary", style="blue")
+    metrics_table.add_column("Metric", justify="left")
+    metrics_table.add_column("Value", justify="center")
+    metrics_table.add_row("Accuracy", f"{accuracy:.4f}")
+    metrics_table.add_row("ROC AUC", f"{roc_auc:.4f}")
+    metrics_table.add_row("Precision", f"{precision:.4f}")
+    metrics_table.add_row("Recall", f"{recall:.4f}")
+    metrics_table.add_row("F1 Score", f"{f1:.4f}")
+    console.print(metrics_table)
     
     # Feature importance
     feature_importance = pd.DataFrame({
@@ -121,15 +106,15 @@ def train_model(X, y):
         'Importance': model.feature_importances_
     }).sort_values('Importance', ascending=False)
     
-    print("Top 10 Important Features:")
-    print(feature_importance.head(10))
+    console.print("Top 10 Important Features:", style="bold blue")
+    console.print(feature_importance.head(10), style="blue")
     
     return model, X_train, X_test, y_train, y_test
 
 # Save the model
 def save_model(model, filename='fqdn_classifier_model.joblib'):
     joblib.dump(model, filename)
-    print(f"Model saved as {filename}")
+    console.print(f"Model saved as {filename}", style="bold green")
 
 # Load the model
 def load_model(filename='fqdn_classifier_model.joblib'):
@@ -152,25 +137,20 @@ def predict_fqdn(model, fqdn):
 
 # Main function
 def main():
-    # Load data
-    print("Loading data...")
+    console.print("Loading data...", style="bold blue")
     df = load_data('whitelist.txt', 'blacklist.txt')
-    print(f"Loaded {len(df)} FQDNs ({df['label'].value_counts()[0]} good, {df['label'].value_counts()[1]} bad)")
+    console.print(f"Loaded {len(df)} FQDNs ({df['label'].value_counts()[0]} good, {df['label'].value_counts()[1]} bad)", style="green")
     
-    # Prepare dataset
-    print("Extracting features...")
+    console.print("Extracting features...", style="bold blue")
     X, y = prepare_dataset(df)
-    print(f"Extracted {X.shape[1]} features")
+    console.print(f"Extracted {X.shape[1]} features", style="green")
     
-    # Train model
-    print("Training model...")
+    console.print("Training model...", style="bold blue")
     model, X_train, X_test, y_train, y_test = train_model(X, y)
     
-    # Save model
     save_model(model)
     
-    # Example predictions
-    print("\nExample predictions:")
+    console.print("\nExample predictions:", style="bold blue")
     test_domains = [
         'google.com',
         'facebook.com',
@@ -180,7 +160,7 @@ def main():
     
     for domain in test_domains:
         result, confidence = predict_fqdn(model, domain)
-        print(f"{domain}: {result} (Confidence: {confidence:.4f})")
+        console.print(f"{domain}: {result} (Confidence: {confidence:.4f})", style="bold yellow")
 
 if __name__ == "__main__":
     main()
