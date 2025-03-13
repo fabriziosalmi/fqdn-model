@@ -1,0 +1,7 @@
+flask
+joblib
+pandas
+numpy
+tldextract
+rich
+scikit-learn
