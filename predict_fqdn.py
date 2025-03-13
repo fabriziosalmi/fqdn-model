@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys
+import time  # ...new import...
 import joblib
 import pandas as pd
 import numpy as np
@@ -31,7 +32,7 @@ def predict_fqdn(model, fqdn):
     
     return result, confidence
 
-def display_prediction_result(fqdn, result, confidence):
+def display_prediction_result(fqdn, result, confidence, exec_time):  # added exec_time parameter
     # Create a styled panel for the result
     is_malicious = result == 'Bad (Malicious)'
     result_color = 'red' if is_malicious else 'green'
@@ -64,22 +65,21 @@ def display_prediction_result(fqdn, result, confidence):
         result_text.append("─" * empty_chars, style=grey_style) # use ─ instead of - for better appearance.
 
     result_text.append(f" {confidence:.2%}\n")
+    # Append execution time stat
+    result_text.append(f'Execution Time: {exec_time:.2f} s\n', style=bold_style)
 
     # Display the panel
     console.print(Panel(result_text, border_style=result_color))
 
 def main():
-    # Check if FQDN is provided as command-line argument
-    if len(sys.argv) != 2:
-        console.print('\n[bold red]Error:[/] Missing domain name argument!')
-        console.print('\n[bold]Usage:[/] python predict_fqdn.py <domain_name>')
-        console.print('[bold]Example:[/] python predict_fqdn.py example.com\n')
+    # Check arguments: either a single FQDN or a txt file with list of FQDNs using '--file'
+    if len(sys.argv) != 2 and len(sys.argv) != 3:
+        console.print('\n[bold red]Error:[/] Incorrect arguments!')
+        console.print('\nUsage:\n  python predict_fqdn.py <domain_name>\n  python predict_fqdn.py --file <file_path>\n')
         sys.exit(1)
     
-    fqdn = sys.argv[1]
-    
+    # Load model with progress indication
     try:
-        # Show loading progress
         with Progress(
             SpinnerColumn(),
             TextColumn("[bold blue]{task.description}"),
@@ -87,13 +87,6 @@ def main():
         ) as progress:
             progress.add_task("Loading model...", total=None)
             model = joblib.load('fqdn_classifier_model.joblib')
-            
-            # Make prediction
-            result, confidence = predict_fqdn(model, fqdn)
-            
-            # Display result with rich formatting
-            display_prediction_result(fqdn, result, confidence)
-            
     except FileNotFoundError:
         console.print('\n[bold red]Error:[/] Model file \'fqdn_classifier_model.joblib\' not found.')
         console.print('[yellow]Please run the main script (fqdn_classifier.py) first to train and save the model.[/]\n')
@@ -101,6 +94,29 @@ def main():
     except Exception as e:
         console.print(f'\n[bold red]Error:[/] {str(e)}\n')
         sys.exit(1)
+    
+    # Check if predicting from file or a single FQDN
+    if sys.argv[1] == '--file' and len(sys.argv) == 3:
+        file_path = sys.argv[2]
+        try:
+            with open(file_path, 'r') as f:
+                fqdns = [line.strip() for line in f if line.strip()]
+        except Exception as e:
+            console.print(f'\n[bold red]Error:[/] Unable to read file: {str(e)}\n')
+            sys.exit(1)
+        
+        # Loop through all FQDNs in file
+        for fqdn in fqdns:
+            start_time = time.time()
+            result, confidence = predict_fqdn(model, fqdn)
+            exec_time = time.time() - start_time
+            display_prediction_result(fqdn, result, confidence, exec_time)
+    else:
+        fqdn = sys.argv[1]
+        start_time = time.time()
+        result, confidence = predict_fqdn(model, fqdn)
+        exec_time = time.time() - start_time
+        display_prediction_result(fqdn, result, confidence, exec_time)
 
 if __name__ == "__main__":
     main()
