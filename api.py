@@ -9,6 +9,7 @@ app = Flask(__name__)
 # Load model on startup
 try:
     model = joblib.load('fqdn_classifier_model.joblib')
+    # model = joblib.load('fqdn_classifier_model_compressed.joblib') # Load compressed model instead
 except Exception as e:
     print(f"Error loading model: {str(e)}")
     model = None
