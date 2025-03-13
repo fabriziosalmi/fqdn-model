@@ -1,10 +1,13 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 import time
 import joblib
 import pandas as pd
 from feature_engineering import extract_features
 
 app = Flask(__name__)
+# REMOVE flask_cors
+# from flask_cors import CORS
+# CORS(app)  #remove flask CORS if serving from flaks
 
 # Load model on startup
 try:
@@ -40,6 +43,10 @@ def predict():
         'confidence': f"{confidence:.2%}",
         'execution_time': f"{exec_time:.2f} s"
     })
+
+@app.route('/')
+def index():
+    return render_template('index.html')  # Make sure your index.html is in a folder called 'templates'
 
 if __name__ == '__main__':
     app.run(debug=True)

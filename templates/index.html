@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FQDN Classifier</title>
+    <style>
+        /* CSS Variables for Theming */
+        :root {
+            --bg-color: #e6f7ff;  /* Lighter, softer background */
+            --container-bg: #fff;
+            --text-color: #2c3e50;  /* Darker, more professional heading color */
+            --input-border: #bdc3c7;
+            --input-focus: #3498db;
+            --button-bg: #3498db;  /* More vibrant button color */
+            --button-hover: #2980b9;  /* Darker shade on hover */
+            --result-border: #ecf0f1;  /* More defined border */
+            --result-bg: #fdfefe;  /* Slightly brighter background */
+            --label-color: #7f8c8d;  /* Muted color for labels */
+            --error-color: #c0392b;  /* Brighter red for errors */
+            --success-color: #27ae60;  /* Brighter green for success */
+            --loading-color: #95a5a6;  /* Muted color for loading */
+        }
+
+        /* Dark Theme */
+        body.dark-theme {
+            --bg-color: #222;
+            --container-bg: #333;
+            --text-color: #fff;
+            --input-border: #555;
+            --input-focus: #64b5f6;
+            --button-bg: #64b5f6;
+            --button-hover: #42a5f5;
+            --result-border: #555;
+            --result-bg: #444;
+            --label-color: #999;
+            --error-color: #e57373;
+            --success-color: #81c784;
+            --loading-color: #bdbdbd;
+        }
+
+        /* General Styles */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; /* Modern font */
+            background-color: var(--bg-color);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            transition: background-color 0.3s, color 0.3s;  /* Smooth transition for theme changes */
+            color: var(--text-color); /*added text color*/
+        }
+
+        .container {
+            background-color: var(--container-bg);
+            padding: 40px; /* Increased padding */
+            border-radius: 12px; /* More rounded corners */
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15); /* More pronounced shadow */
+            width: 600px; /* Slightly wider */
+            max-width: 90%; /* Responsive width */
+            text-align: center;
+            transition: background-color 0.3s, color 0.3s; /* Smooth transition for theme changes */
+        }
+
+        h1 {
+            color: var(--text-color);
+            margin-bottom: 20px; /* More space below the heading */
+        }
+
+        /* Input Field */
+        input[type="text"] {
+            width: 90%;
+            padding: 14px; /* Increased padding */
+            margin: 15px 0; /* Increased margin */
+            border: 2px solid var(--input-border); /* Slightly thicker border */
+            border-radius: 6px; /* More rounded input */
+            box-sizing: border-box;
+            font-size: 16px;
+            transition: border-color 0.3s, background-color 0.3s, color 0.3s;  /* Smooth transition for focus */
+            background-color: var(--container-bg);
+            color: var(--text-color);
+        }
+
+        input[type="text"]::placeholder {
+            color: #aaa; /* Adjust placeholder color for better visibility */
+        }
+
+        input[type="text"]:focus {
+            border-color: var(--input-focus); /* Highlight on focus */
+            outline: none; /* Remove default outline */
+        }
+
+        /* Button */
+        button {
+            background-color: var(--button-bg); /* More vibrant button color */
+            color: white;
+            padding: 14px 24px; /* Increased padding */
+            border: none;
+            border-radius: 6px; /* Rounded button */
+            cursor: pointer;
+            font-size: 18px; /* Slightly larger font */
+            transition: background-color 0.3s, transform 0.2s; /* Smooth transitions */
+        }
+
+        button:hover {
+            background-color: var(--button-hover); /* Darker shade on hover */
+            transform: translateY(-2px); /* Slight lift on hover */
+        }
+
+        button:active {
+            transform: translateY(0); /* Reset transform when active */
+        }
+
+        /* Result Area */
+        #result {
+            margin-top: 30px; /* Increased margin */
+            padding: 20px; /* Increased padding */
+            border: 2px solid var(--result-border); /* More defined border */
+            border-radius: 8px; /* More rounded corners */
+            background-color: var(--result-bg); /* Slightly brighter background */
+            text-align: left;
+            transition: background-color 0.3s, color 0.3s; /* Smooth transition for theme changes */
+        }
+
+        #result p {
+            margin-bottom: 8px; /* Spacing between result lines */
+        }
+
+        #result b {
+            color: var(--label-color); /* Muted color for labels */
+            margin-right: 5px;
+            transition: color 0.3s; /* Smooth transition for theme changes */
+        }
+
+        #result span {
+            transition: color 0.3s; /* Smooth transition for theme changes */
+        }
+
+        /* Status Messages */
+        .error {
+            color: var(--error-color); /* Brighter red for errors */
+            font-weight: 500;
+            margin-top: 10px;
+        }
+
+        .success {
+            color: var(--success-color); /* Brighter green for success */
+            font-weight: 500;
+            margin-top: 10px;
+        }
+
+        /* Loading Indicator */
+        .loading {
+            display: none;
+            margin-top: 15px;
+            font-style: italic;
+            color: var(--loading-color); /* Muted color for loading */
+        }
+
+        /* Theme Toggle Button */
+        #theme-toggle {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background-color: var(--button-bg);
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        #theme-toggle:hover {
+            background-color: var(--button-hover);
+        }
+
+    </style>
+</head>
+<body>
+
+    <button id="theme-toggle">Toggle Dark Mode</button>
+
+    <div class="container">
+        <h1>FQDN Classifier</h1>
+        <input type="text" id="fqdnInput" placeholder="Enter FQDN (e.g., example.com)">
+        <button onclick="predictFQDN()">Predict</button>
+        <p class="loading" id="loadingIndicator">Loading...</p>
+
+        <div id="result">
+            <p><b>FQDN:</b> <span id="fqdnResult"></span></p>
+            <p><b>Classification:</b> <span id="classificationResult"></span></p>
+            <p><b>Confidence:</b> <span id="confidenceResult"></span></p>
+            <p><b>Execution Time:</b> <span id="executionTimeResult"></span></p>
+        </div>
+    </div>
+
+    <script>
+        // Theme Toggle Functionality
+        const themeToggle = document.getElementById('theme-toggle');
+        const body = document.body;
+
+        // Check for saved theme preference in local storage
+        const savedTheme = localStorage.getItem('theme');
+        if (savedTheme) {
+            body.classList.add(savedTheme);
+        }
+
+        themeToggle.addEventListener('click', () => {
+            body.classList.toggle('dark-theme');
+            if (body.classList.contains('dark-theme')) {
+                localStorage.setItem('theme', 'dark-theme');
+            } else {
+                localStorage.setItem('theme', ''); // Remove the key to use default
+            }
+        });
+
+
+        async function predictFQDN() {
+            const fqdn = document.getElementById('fqdnInput').value;
+            const resultDiv = document.getElementById('result');
+            const fqdnResultElement = document.getElementById('fqdnResult');
+            const classificationResultElement = document.getElementById('classificationResult');
+            const confidenceResultElement = document.getElementById('confidenceResult');
+            const executionTimeResultElement = document.getElementById('executionTimeResult');
+            const loadingIndicator = document.getElementById('loadingIndicator');
+
+            fqdnResultElement.textContent = '';
+            classificationResultElement.textContent = '';
+            confidenceResultElement.textContent = '';
+            executionTimeResultElement.textContent = '';
+
+            if (!fqdn) {
+                classificationResultElement.textContent = 'Please enter an FQDN.';
+                classificationResultElement.className = 'error';
+                return;
+            }
+
+            loadingIndicator.style.display = 'block';
+
+            try {
+                const response = await fetch('/predict', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ fqdn: fqdn })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    fqdnResultElement.textContent = data.fqdn;
+                    classificationResultElement.textContent = data.classification;
+                    classificationResultElement.className = 'success';
+                    confidenceResultElement.textContent = data.confidence;
+                    executionTimeResultElement.textContent = data.execution_time;
+
+                } else {
+                    classificationResultElement.textContent = data.error || 'An error occurred.';
+                    classificationResultElement.className = 'error';
+                }
+            } catch (error) {
+                classificationResultElement.textContent = 'Failed to connect to the API.';
+                classificationResultElement.className = 'error';
+                console.error("Error:", error);
+            } finally {
+                loadingIndicator.style.display = 'none';
+            }
+        }
+    </script>
+
+</body>
+</html>
