@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
 
-This repository contains a Python-based FQDN (Fully Qualified Domain Name) classifier that uses machine learning to predict whether a given domain is benign (good) or malicious (bad). It's built with `scikit-learn`, `tldextract`, enhanced with `rich` for visually appealing output, and includes a Flask API for easy integration.
+This repository contains a Python-based FQDN (Fully Qualified Domain Name) classifier that uses machine learning to predict whether a given domain is benign (good) or malicious (bad). It's built with `scikit-learn`, `tldextract`, enhanced with `rich` for visually appealing output, and includes a Flask API for easy integration.  This project now supports using custom-trained models via a command-line argument.
 
 ## Demo
 
@@ -22,15 +22,19 @@ This repository contains a Python-based FQDN (Fully Qualified Domain Name) class
     *   [Using the Flask API](#using-the-flask-api)
 5.  [Data Format](#data-format)
 6.  [Model Details](#model-details)
+    *   [Feature Engineering](#feature-engineering)
+    *   [Model Selection](#model-selection)
+    *   [Model Persistence](#model-persistence)
 7.  [Performance Metrics](#performance-metrics)
-8.  [Contributing](#contributing)
-9.  [License](#license)
-10. [Credits](#credits)
-11. [Contact](#contact)
+8.  [Quantization & Compression](#quantization--compression)
+9.  [Contributing](#contributing)
+10. [License](#license)
+11. [Credits](#credits)
+12. [Contact](#contact)
 
 ## Overview
 
-This project provides a reliable and easy-to-use tool for classifying FQDNs.  It leverages a Random Forest Classifier, trained on lists of known benign and malicious domains, to identify potentially harmful domains. The inclusion of a Flask API enables seamless integration into other applications. The `rich` library provides visual enhancements to the output.
+This project provides a reliable and easy-to-use tool for classifying FQDNs. It leverages a Random Forest Classifier, trained on lists of known benign and malicious domains, to identify potentially harmful domains. The inclusion of a Flask API enables seamless integration into other applications. The `rich` library provides visual enhancements to the output. The command-line tool (`predict_fqdn.py`) now allows the user to specify which `.joblib` model file to load.
 
 ## Features
 
@@ -38,7 +42,9 @@ This project provides a reliable and easy-to-use tool for classifying FQDNs.  It
 *   **Feature Extraction:** Extracts a comprehensive set of features from FQDNs, including length-based, character distribution, and entropy-based features.
 *   **Model Training:** Trains a Random Forest Classifier on provided data.
 *   **Model Persistence:** Saves and loads trained models using `joblib`.
-*   **Command-Line Interface:** Classify single FQDNs or lists of FQDNs from a file using `predict_fqdn.py`.
+*   **Command-Line Interface:**
+    *   Classify single FQDNs or lists of FQDNs from a file using `predict_fqdn.py`.
+    *   Specify the model to use with the `--model` argument, allowing the use of custom-trained or compressed models.
 *   **Flask API:** Provides a RESTful API for making predictions programmatically.
 *   **Rich Output:** Uses the `rich` library to provide visually appealing and informative output, including:
     *   Accuracy and ROC AUC scores.
@@ -47,8 +53,8 @@ This project provides a reliable and easy-to-use tool for classifying FQDNs.  It
     *   Feature importance ranking.
     *   Styled prediction results with execution time.
 *   **Clear Error Handling:** Provides informative error messages for common issues like missing model files or incorrect usage.
-*   **Progress Bar:** Uses Rich progress bar for loading model
-*   **Execution Time Measurement:**  Measures and displays the execution time for predictions.
+*   **Progress Bar:** Uses Rich progress bar for loading model.
+*   **Execution Time Measurement:** Measures and displays the execution time for predictions.
 
 ## Installation
 
@@ -127,13 +133,27 @@ This project provides a reliable and easy-to-use tool for classifying FQDNs.  It
     python predict_fqdn.py --file <file_path>
     ```
 
-    Replace `<domain_name>` with the FQDN you want to classify and `<file_path>` with the path to your file.
+    **Specifying a Custom Model:**
+
+    Use the `--model` argument to specify the path to a custom-trained or compressed model:
+
+    ```bash
+    python predict_fqdn.py <domain_name> --model <path_to_model.joblib>
+    ```
+
+    ```bash
+    python predict_fqdn.py --file <file_path> --model <path_to_model.joblib>
+    ```
+
+    Replace `<domain_name>` with the FQDN you want to classify, `<file_path>` with the path to your file, and `<path_to_model.joblib>` with the path to your model file.  If `--model` is not specified, the script defaults to using `fqdn_classifier_model.joblib`.
 
     **Examples:**
 
     ```bash
     python predict_fqdn.py google.com
     python predict_fqdn.py --file domains_to_check.txt
+    python predict_fqdn.py malware.example.com --model my_custom_model.joblib
+    python predict_fqdn.py --file domains_to_check.txt --model compressed_model.joblib
     ```
 
     The script will load the trained model, extract features from the input FQDN(s), predict the class (benign or malicious), and display the result with a confidence score and execution time.
@@ -148,7 +168,7 @@ This project provides a reliable and easy-to-use tool for classifying FQDNs.  It
     python api.py
     ```
 
-    This will start a Flask development server.  By default, it will run on `http://127.0.0.1:5000/`.
+    This will start a Flask development server. By default, it will run on `http://127.0.0.1:5000/`.  The API always uses `fqdn_classifier_model.joblib`.
 
 3.  **Make predictions using a POST request:**
 
@@ -219,7 +239,10 @@ evil-domain.com
 
 *   **Model:** Random Forest Classifier
 *   **Number of Estimators:** 100 (configurable in `fqdn_classifier.py`)
-*   **Feature Extraction:** Features are extracted using the `extract_features` function in `feature_engineering.py`.  These features include:
+
+### Feature Engineering
+
+*   Features are extracted using the `extract_features` function in `feature_engineering.py`. These features include:
     *   Length of the FQDN, domain, subdomain, and suffix.
     *   Number of dots, hyphens, and underscores.
     *   Number of digits.
@@ -228,6 +251,15 @@ evil-domain.com
     *   Character distribution.
     *   Entropy.
     *   Consonant, vowel, and digit ratios.
+    *   *Important:* The `extract_features` function *must* return the same data types as used during training (e.g., `np.float16` if training with reduced precision).
+
+### Model Selection
+
+*   The Random Forest Classifier was chosen for its balance of accuracy, interpretability, and robustness. Other models could be explored, but the Random Forest provides a good starting point.
+
+### Model Persistence
+
+*   Trained models are saved and loaded using `joblib` for efficient serialization and deserialization. This allows you to train the model once and then reuse it for prediction without retraining.
 
 ## Performance Metrics
 
@@ -240,6 +272,27 @@ The `fqdn_classifier.py` script evaluates the trained model using the following 
 *   **F1-Score:** The harmonic mean of precision and recall.
 *   **Confusion Matrix:** A table showing the counts of true positives, true negatives, false positives, and false negatives.
 *   **Feature Importance:** A ranking of the features based on their contribution to the model's performance.
+
+## Quantization & Compression
+
+This project supports model quantization and compression to reduce the model size and improve performance:
+
+*   **Training with Reduced Precision:** The `fqdn_classifier.py` script can be modified to train models using `np.float16` data types for the feature matrix. This reduces the memory footprint of the model and can potentially improve prediction speed.  See the comments in the `train_model` function in `fqdn_classifier.py` for details.  *Important: `extract_features` must also return `np.float16` features in this case.*
+*   **`joblib` Compression:** The `joblib.dump` function can be used with the `compress` argument to compress the saved model file. This reduces the file size on disk. Use the `compress_model.py` script for this.
+
+See `compress_model.py -h` for instructions:
+
+```bash
+python compress_model.py -h
+```
+
+Example usage:
+
+```bash
+python compress_model.py fqdn_classifier_model.joblib -c 5 -o compressed_model.joblib --overwrite
+```
+
+* It's now possible to use the `predict_fqdn.py` with compressed, custom model using `--model` argument
 
 ## Contributing
 
