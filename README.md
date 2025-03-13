@@ -17,6 +17,10 @@ This repository contains a Python-based FQDN (Fully Qualified Domain Name) class
 
 ![screenshot](https://github.com/fabriziosalmi/fqdn-model/blob/main/screenshot2.png?raw=true)
 
+**Web UI** detect domains via web interface
+![screenshot](https://github.com/fabriziosalmi/fqdn-model/blob/main/screenshot3.png?raw=true)
+
+
 ## Table of Contents
 
 1.  [Overview](#overview)
@@ -61,6 +65,7 @@ This project provides a reliable and easy-to-use tool for classifying FQDNs. It 
 *   **Clear Error Handling:** Provides informative error messages for common issues like missing model files or incorrect usage.
 *   **Progress Bar:** Uses Rich progress bar for loading model.
 *   **Execution Time Measurement:** Measures and displays the execution time for predictions.
+*   **UI:** Detect domains via practical user interface.
 
 ## Installation
 
