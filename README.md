@@ -9,7 +9,7 @@ This repository contains a Python-based FQDN (Fully Qualified Domain Name) class
 
 ## Demo
 
-**Train the model** against 40000 items dataset
+**Train the model** against 40000 items dataset engineering 59 features (latest version support up to 106 features)
 
 ![screenshot](https://github.com/fabriziosalmi/fqdn-model/blob/main/screenshot.png?raw=true)
 
