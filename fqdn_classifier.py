@@ -108,7 +108,8 @@ def train_model(X, y):
     
     console.print("Top 10 Important Features:", style="bold blue")
     console.print(feature_importance.head(10), style="blue")
-    
+    console.print("\n")
+
     return model, X_train, X_test, y_train, y_test
 
 # Save the model

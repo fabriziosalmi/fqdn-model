@@ -42,4 +42,13 @@ def extract_features(fqdn):
     features['vowel_ratio'] = sum(c.lower() in 'aeiou' for c in fqdn) / len(fqdn) if len(fqdn) > 0 else 0
     features['digit_ratio'] = features['num_digits'] / len(fqdn) if len(fqdn) > 0 else 0
     
+    # Added new features:
+    features['letter_count'] = sum(c.isalpha() for c in fqdn)
+    features['special_char_count'] = sum((not c.isalnum()) and c not in ['.', '-', '_'] for c in fqdn)
+    
+    # Additional extra features:
+    features['uppercase_count'] = sum(c.isupper() for c in fqdn)
+    features['unique_char_count'] = len(set(fqdn.lower()))
+    features['unique_char_ratio'] = features['unique_char_count'] / len(fqdn) if len(fqdn) > 0 else 0
+    
     return features
