@@ -30,28 +30,15 @@ This repository contains a Python-based FQDN (Fully Qualified Domain Name) class
 
 ## Overview
 
-This project provides a reliable and easy-to-use tool for classifying FQDNs. It leverages a Random Forest Classifier, trained on lists of known benign and malicious domains, to identify potentially harmful domains. The inclusion of a Flask API enables seamless integration into other applications. The `rich` library provides visual enhancements to the output. The command-line tool (`predict_fqdn.py`) now allows the user to specify which `.joblib` model file to load.
+This project provides a reliable and easy-to-use tool for classifying FQDNs. It leverages a Random Forest Classifier now enhanced with advanced FQDN analysis including extended DNS resolution (A, AAAA, MX, TXT, CNAME), SSL certificate verification, WHOIS lookups, and comprehensive feature extraction (domain length, subdomain count, etc.). Enhanced configuration options make it flexible and robust. The inclusion of a Flask API enables seamless integration into other applications. The `rich` library provides visual enhancements to the output. The command-line tool (`predict_fqdn.py`) now allows the user to specify which `.joblib` model file to load.
 
 ## Features
 
-*   **Classification:** Predicts whether an FQDN is benign (good) or malicious (bad).
-*   **Feature Extraction:** Extracts a comprehensive set of features from FQDNs, including length-based, character distribution, and entropy-based features.
-*   **Model Training:** Trains a Random Forest Classifier on provided data.
-*   **Model Persistence:** Saves and loads trained models using `joblib`.
-*   **Command-Line Interface:**
-    *   Classify single FQDNs or lists of FQDNs from a file using `predict_fqdn.py`.
-    *   Specify the model to use with the `--model` argument, allowing the use of custom-trained or compressed models.
-*   **Flask API:** Provides a RESTful API for making predictions programmatically.
-*   **Rich Output:** Uses the `rich` library to provide visually appealing and informative output, including:
-    *   Accuracy and ROC AUC scores.
-    *   Confusion matrix.
-    *   Classification report.
-    *   Feature importance ranking.
-    *   Styled prediction results with execution time.
-*   **Clear Error Handling:** Provides informative error messages for common issues like missing model files or incorrect usage.
-*   **Progress Bar:** Uses Rich progress bar for loading model.
-*   **Execution Time Measurement:** Measures and displays the execution time for predictions.
-*   **UI:** Detect domains via practical user interface.
+*   **Advanced Domain Analysis:** Augmented scripts now perform detailed DNS record lookups, SSL certificate checks, WHOIS queries, and keyword matching.
+*   **Configurable Parameters:** Customize DNS resolvers, timeouts, worker threads, and WHOIS lookups via command-line flags or config files.
+*   **Model Training & Persistence:** Trains a Random Forest Classifier with enhanced features and supports model quantization and joblib compression.
+*   **Command-Line Interface & Flask API:** Updated scripts for improved error handling, progress reporting, and support for custom-trained or compressed models.
+*   **Rich Output:** Uses the `rich` library to present stylized output and detailed performance metrics.
 
 ## Installation
 
@@ -100,10 +87,10 @@ This project provides a reliable and easy-to-use tool for classifying FQDNs. It 
 
 2.  **Build Augmented Datasets**
 
-    Use the `augment.py` script to convert the shipped text files into CSV format:
+    The `augment.py` script now supports additional parameters for improved domain analysis. For example:
     ```bash
-    python augment.py -i whitelist.txt -o whitelist.csv --is_bad 0
-    python augment.py -i blacklist.txt -o blacklist.csv --is_bad 1
+    python augment.py -i whitelist.txt -o whitelist.csv --is_bad 0 --dns-resolvers 1.1.1.1,8.8.8.8 --whois
+    python augment.py -i blacklist.txt -o blacklist.csv --is_bad 1 --dns-resolvers 1.1.1.1,8.8.8.8 --whois
     ```
 
 3.  **Merge Datasets**
@@ -120,11 +107,7 @@ This project provides a reliable and easy-to-use tool for classifying FQDNs. It 
     python fqdn_classifier.py dataset.csv
     ```
 
-    This process will:
-    - Load the data.
-    - Extract features from the FQDNs.
-    - Train multiple models using cross-validation.
-    - Evaluate and save the best model along with its preprocessing steps to the `models` directory.
+    This updated training process leverages the enhanced feature extraction and improved error handling.
 
 ### Predicting FQDNs via Command Line
 
@@ -165,6 +148,66 @@ This project provides a reliable and easy-to-use tool for classifying FQDNs. It 
     python predict_fqdn.py --file domains_to_check.txt
     python predict_fqdn.py malware.example.com --model my_custom_model.joblib
     python predict_fqdn.py --file domains_to_check.txt --model compressed_model.joblib
+    ```
+
+    Example output:
+
+    ```bash
+    python fqdn_classifier.py dataset.20k.json 
+
+    [22:42:39] INFO     Data loaded successfully from dataset.20k.json                                                                                                      fqdn_classifier.py:91
+            INFO     Cross-validation (accuracy) scores (mean ± std): 0.9991 ± 0.0006                                                                                   fqdn_classifier.py:193
+    Cross-validating random_forest... (Fold 5/5)   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 100% 0:00:00
+    ┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
+    ┃ Metric               ┃ Value           ┃
+    ┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
+    │ Accuracy             │ 0.9990          │
+    │ F1 Score             │ 0.9990          │
+    │ Precision            │ 0.9990          │
+    │ Recall               │ 0.9990          │
+    │ ROC AUC              │ 1.0000          │
+    │ Log Loss             │ 0.0552          │
+    │ Brier Score          │ 0.0061          │
+    │ CV Accuracy (Mean)   │ 0.9991          │
+    │ CV Accuracy (Std)    │ 0.0006          │
+    └──────────────────────┴─────────────────┘
+    ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+    │                                                                                                                                                                                           │
+    │ Classification Report:                                                                                                                                                                    │
+    │               precision    recall  f1-score   support                                                                                                                                     │
+    │                                                                                                                                                                                           │
+    │            0       1.00      1.00      1.00      2781                                                                                                                                     │
+    │            1       1.00      1.00      1.00      1216                                                                                                                                     │
+    │                                                                                                                                                                                           │
+    │     accuracy                           1.00      3997                                                                                                                                     │
+    │    macro avg       1.00      1.00      1.00      3997                                                                                                                                     │
+    │ weighted avg       1.00      1.00      1.00      3997                                                                                                                                     │
+    │                                                                                                                                                                                           │
+    ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+    Confusion Matrix:
+    [[2777    4]
+    [   0 1216]]
+            INFO     Confusion matrix saved to confusion_matrix.png                                                                                                      fqdn_classifier.py:58
+
+    Top 10 Feature Importances:
+    ┏━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┓
+    ┃ Rank   ┃ Feature                        ┃ Importance   ┃
+    ┡━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━┩
+    │ 1      │ Domain_Length                  │ 0.4474       │
+    │ 2      │ Has_Suspicious_Keywords        │ 0.1301       │
+    │ 3      │ Status_Code_OK                 │ 0.0860       │
+    │ 4      │ Num_Digits                     │ 0.0673       │
+    │ 5      │ Is_Risky_TLD                   │ 0.0598       │
+    │ 6      │ Num_Hyphens                    │ 0.0409       │
+    │ 7      │ Final_Protocol_HTTPS           │ 0.0393       │
+    │ 8      │ High_Redirects                 │ 0.0386       │
+    │ 9      │ A                              │ 0.0173       │
+    │ 10     │ SSL_Verification_Failed        │ 0.0138       │
+    └────────┴────────────────────────────────┴──────────────┘
+            INFO     Best model and preprocessing steps saved to: models                                                                                                fqdn_classifier.py:294
+
+    Total execution time: 0.84 seconds
     ```
 
     The script will load the trained model, extract features from the input FQDN(s), predict the class (benign or malicious), and display the result with a confidence score and execution time.
