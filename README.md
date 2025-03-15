@@ -93,38 +93,38 @@ This project provides a reliable and easy-to-use tool for classifying FQDNs. It 
 ### Training the Model
 
 1.  **Prepare your data:**
+    *   The repository now includes two shipped files:
+        - `whitelist.txt`: Contains a list of benign domains.
+        - `blacklist.txt`: Contains a list of malicious domains.
+    *   These files serve as the basis for training.
 
-    *   Create two text files: `whitelist.txt` (containing a list of benign domains, one per line) and `blacklist.txt` (containing a list of malicious domains, one per line).  Make sure each line contains only a domain name without any leading or trailing whitespace.
+2.  **Build Augmented Datasets**
 
-2. **Run the augment script**
-
+    Use the `augment.py` script to convert the shipped text files into CSV format:
     ```bash
-    python augment.py -i whitelist.txt -o whitelist.csv --is_bad 0 -w 64
-    python augment.py -i blacklist.txt -o blacklist.csv --is_bad 1 -w 64
+    python augment.py -i whitelist.txt -o whitelist.csv --is_bad 0
+    python augment.py -i blacklist.txt -o blacklist.csv --is_bad 1
     ```
 
-3. **Run the merge datasets script**
-    
+3.  **Merge Datasets**
+
+    Combine the augmented CSV files using the `merge_datasets.py` script:
     ```bash
     python merge_datasets.py whitelist.csv blacklist.csv dataset.csv
     ```
 
-2.  **Run the training script:**
+4.  **Train and Save Best Model**
 
+    Train the model using the merged dataset with the `fqdn_classifier.py` script:
     ```bash
-    python fqdn_classifier_ng.py dataset.csv
+    python fqdn_classifier.py dataset.csv
     ```
 
-    This will:
-
-    *   Load the data from `whitelist.txt` and `blacklist.txt`.
-    *   Extract features from the FQDNs.
-    *   Merge datasets created into one.
-    *   Train 3 different models.
-    *   Evaluate the best model and print performance metrics.
-    *   Save the best trained model files to the `models` folders.
-
-    The output will be visually enhanced with `rich` to provide clear and informative results.
+    This process will:
+    - Load the data.
+    - Extract features from the FQDNs.
+    - Train multiple models using cross-validation.
+    - Evaluate and save the best model along with its preprocessing steps to the `models` directory.
 
 ### Predicting FQDNs via Command Line
 
