@@ -7,21 +7,6 @@
 
 This repository contains a Python-based FQDN (Fully Qualified Domain Name) classifier that uses machine learning to predict whether a given domain is benign (good) or malicious (bad). It's built with `scikit-learn`, `tldextract`, enhanced with `rich` for visually appealing output, and includes a Flask API for easy integration.  This project now supports using custom-trained models via a command-line argument.
 
-## Demo
-
-**Train the model** against 40000 items dataset engineering 59 features (latest version support up to 106 features)
-
-![screenshot](https://github.com/fabriziosalmi/fqdn-model/blob/main/screenshot.png?raw=true)
-
-**Predict FQDN** by using the generated model (60MB size , the most accurate) or the compressed model (10MB size, light and fast!|)
-
-![screenshot](https://github.com/fabriziosalmi/fqdn-model/blob/main/screenshot2.png?raw=true)
-
-**Web UI** detect domains via web interface
-
-![screenshot](https://github.com/fabriziosalmi/fqdn-model/blob/main/screenshot3.png?raw=true)
-
-
 ## Table of Contents
 
 1.  [Overview](#overview)
@@ -111,19 +96,33 @@ This project provides a reliable and easy-to-use tool for classifying FQDNs. It 
 
     *   Create two text files: `whitelist.txt` (containing a list of benign domains, one per line) and `blacklist.txt` (containing a list of malicious domains, one per line).  Make sure each line contains only a domain name without any leading or trailing whitespace.
 
+2. **Run the augment script**
+
+    ```bash
+    python augment.py -i whitelist.txt -o whitelist.csv --is_bad 0 -w 64
+    python augment.py -i blacklist.txt -o blacklist.csv --is_bad 1 -w 64
+    ```
+
+3. **Run the merge datasets script**
+    
+    ```bash
+    python merge_datasets.py whitelist.csv blacklist.csv dataset.csv
+    ```
+
 2.  **Run the training script:**
 
     ```bash
-    python fqdn_classifier.py
+    python fqdn_classifier_ng.py dataset.csv
     ```
 
     This will:
 
     *   Load the data from `whitelist.txt` and `blacklist.txt`.
     *   Extract features from the FQDNs.
-    *   Train a Random Forest Classifier.
-    *   Evaluate the model and print performance metrics.
-    *   Save the trained model to `fqdn_classifier_model.joblib`.
+    *   Merge datasets created into one.
+    *   Train 3 different models.
+    *   Evaluate the best model and print performance metrics.
+    *   Save the best trained model files to the `models` folders.
 
     The output will be visually enhanced with `rich` to provide clear and informative results.
 

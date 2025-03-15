@@ -1,0 +1,11 @@
+FQDN,Is_Bad,Has_A_Record,Has_AAAA_Record,Has_MX_Record,Has_TXT_Record,Final_Protocol_HTTPS,Status_Code_OK,HTTP_to_HTTPS_Redirect,High_Redirects,Redirects,HSTS,Certificate_Valid,Has_Suspicious_Keywords,Final_URL_Known,Certificate_Issuer,Certificate_Expiry,Overall_Status
+freesubnet.com,0,0,0,0,0,1,1,1,0,0,1,1,0,0,0,0,0
+kisstube.tv,0,0,0,0,1,1,1,1,0,0,1,1,0,0,0,0,0
+freeundergroundtekno.org,0,0,0,0,1,1,1,1,0,0,1,1,0,0,0,0,0
+zjs.moatads.com,0,0,0,0,0,1,1,1,0,0,1,1,0,0,0,0,0
+www.cash.livered.xyz,0,0,0,0,0,1,1,1,0,0,1,1,0,0,0,0,0
+audiolibri.org,0,1,1,1,1,1,1,1,0,1,0,1,0,1,0,0,1
+zgvm.mjt.lu,0,1,0,0,1,0,1,0,0,0,1,1,0,1,0,0,1
+chatgpt.hoshimi.fans,0,1,0,0,0,1,1,1,0,1,1,1,0,1,0,0,0
+www-79.dashboard.chartboost.com,0,1,0,0,0,1,1,1,0,0,1,1,0,0,0,0,0
+free-tekno.com,0,1,1,1,1,1,1,1,0,0,1,1,0,0,0,0,0
