@@ -27,10 +27,13 @@ This repository contains a Python-based FQDN (Fully Qualified Domain Name) class
 10. [License](#license)
 11. [Credits](#credits)
 12. [Contact](#contact)
+13. [Documentation Updates](#documentation-updates)
+14. [Configuration Details](#configuration-details)
+15. [Changelog](#changelog)
 
 ## Overview
 
-This project provides a reliable and easy-to-use tool for classifying FQDNs. It leverages a Random Forest Classifier now enhanced with advanced FQDN analysis including extended DNS resolution (A, AAAA, MX, TXT, CNAME), SSL certificate verification, WHOIS lookups, and comprehensive feature extraction (domain length, subdomain count, etc.). Enhanced configuration options make it flexible and robust. The inclusion of a Flask API enables seamless integration into other applications. The `rich` library provides visual enhancements to the output. The command-line tool (`predict_fqdn.py`) now allows the user to specify which `.joblib` model file to load.
+This project provides a reliable and easy-to-use tool for classifying FQDNs. It leverages a Random Forest Classifier with enhanced FQDN analysis including extended DNS resolution, SSL certificate verification, WHOIS lookups, and comprehensive feature extraction. The documentation below has been improved and extended for clarity. Enhanced configuration options make it flexible and robust. The inclusion of a Flask API enables seamless integration into other applications. The `rich` library provides visual enhancements to the output. The command-line tool (`predict.py`) now allows the user to specify which `.joblib` model file to load.
 
 ## Features
 
@@ -113,41 +116,37 @@ This project provides a reliable and easy-to-use tool for classifying FQDNs. It 
 
 1.  **Make sure the model is trained and saved:** Run the training script (`fqdn_classifier.py`) first.
 
-2.  **Use the prediction script (`predict_fqdn.py`):**
+2.  **Use the prediction tool (`predict.py`):**
 
     You can predict a single FQDN:
 
     ```bash
-    python predict_fqdn.py <domain_name>
+    python predict.py <domain_name>
     ```
 
     Or, you can predict multiple FQDNs from a file (one FQDN per line):
 
     ```bash
-    python predict_fqdn.py --file <file_path>
+    python predict.py --fqdns_file <file_path>
     ```
 
     **Specifying a Custom Model:**
 
-    Use the `--model` argument to specify the path to a custom-trained or compressed model:
+    Use the `--model_dir` argument to specify the directory containing a custom-trained or compressed model, for example:
 
     ```bash
-    python predict_fqdn.py <domain_name> --model <path_to_model.joblib>
+    python predict.py <domain_name> --model_dir <path_to_model_directory>
     ```
 
-    ```bash
-    python predict_fqdn.py --file <file_path> --model <path_to_model.joblib>
-    ```
-
-    Replace `<domain_name>` with the FQDN you want to classify, `<file_path>` with the path to your file, and `<path_to_model.joblib>` with the path to your model file.  If `--model` is not specified, the script defaults to using `fqdn_classifier_model.joblib`.
+    Replace `<domain_name>` with the FQDN to classify and `<path_to_model_directory>` with the folder path that contains the model files.
 
     **Examples:**
 
     ```bash
-    python predict_fqdn.py google.com
-    python predict_fqdn.py --file domains_to_check.txt
-    python predict_fqdn.py malware.example.com --model my_custom_model.joblib
-    python predict_fqdn.py --file domains_to_check.txt --model compressed_model.joblib
+    python predict.py google.com
+    python predict.py --fqdns_file domains_to_check.txt
+    python predict.py malware.example.com --model_dir my_custom_model_directory
+    python predict.py --fqdns_file domains_to_check.txt --model_dir compressed_model_directory
     ```
 
     Example output:
@@ -351,7 +350,7 @@ Example usage:
 python compress_model.py fqdn_classifier_model.joblib -c 5 -o compressed_model.joblib --overwrite
 ```
 
-* It's now possible to use the `predict_fqdn.py` with compressed, custom model using `--model` argument
+* It's now possible to use the `predict.py` with compressed, custom model using `--model_dir` argument
 
 ## Contributing
 
@@ -387,3 +386,21 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## Contact
 
 If you have any questions or suggestions, feel free to open an issue or contact me directly.
+
+## Documentation Updates
+
+* The documentation in this README has been updated to fix typos and improve clarity.
+* All references to the prediction script now use `predict.py`.
+* Additional details about configuration, such as the settings in config.ini, are now available in their own section below.
+
+## Configuration Details
+
+The configuration file (`config.ini`) in the repository allows you to customize parameters such as DNS resolvers, timeouts, and others. Refer to the comments within `config.ini` for detailed explanations of each parameter.
+
+## Changelog
+
+* **v1.1** – Updated documentation:
+   - Fixed typos (“docuemntnation” → “documentation”)
+   - Updated prediction script name to `predict.py`
+   - Extended documentation with configuration details and a changelog section.
+* **v1.0** – Initial release with FQDN classification using Random Forest along with support for advanced domain analysis.
