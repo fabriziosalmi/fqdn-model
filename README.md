@@ -22,14 +22,13 @@ This repository contains a Python-based FQDN (Fully Qualified Domain Name) class
     *   [Model Selection](#model-selection)
     *   [Model Persistence](#model-persistence)
 7.  [Performance Metrics](#performance-metrics)
-8.  [Quantization & Compression](#quantization--compression)
-9.  [Contributing](#contributing)
-10. [License](#license)
-11. [Credits](#credits)
-12. [Contact](#contact)
-13. [Documentation Updates](#documentation-updates)
-14. [Configuration Details](#configuration-details)
-15. [Changelog](#changelog)
+8.  [Contributing](#contributing)
+9. [License](#license)
+10. [Credits](#credits)
+11. [Contact](#contact)
+12. [Documentation Updates](#documentation-updates)
+13. [Configuration Details](#configuration-details)
+14. [Changelog](#changelog)
 
 ## Overview
 
@@ -261,11 +260,6 @@ This project provides a reliable and easy-to-use tool for classifying FQDNs. It 
     }
     ```
 
-4. Web UI
-   
-> [!NOTE]
-> You can also interact with the API by using the practical web interface at `http://127.0.0.1:5000/`
-
 ## Data Format
 
 The training data consists of two text files:
@@ -330,27 +324,6 @@ The `fqdn_classifier.py` script evaluates the trained model using the following 
 *   **F1-Score:** The harmonic mean of precision and recall.
 *   **Confusion Matrix:** A table showing the counts of true positives, true negatives, false positives, and false negatives.
 *   **Feature Importance:** A ranking of the features based on their contribution to the model's performance.
-
-## Quantization & Compression
-
-This project supports model quantization and compression to reduce the model size and improve performance:
-
-*   **Training with Reduced Precision:** The `fqdn_classifier.py` script can be modified to train models using `np.float16` data types for the feature matrix. This reduces the memory footprint of the model and can potentially improve prediction speed.  See the comments in the `train_model` function in `fqdn_classifier.py` for details.  *Important: `extract_features` must also return `np.float16` features in this case.*
-*   **`joblib` Compression:** The `joblib.dump` function can be used with the `compress` argument to compress the saved model file. This reduces the file size on disk. Use the `compress_model.py` script for this.
-
-See `compress_model.py -h` for instructions:
-
-```bash
-python compress_model.py -h
-```
-
-Example usage:
-
-```bash
-python compress_model.py fqdn_classifier_model.joblib -c 5 -o compressed_model.joblib --overwrite
-```
-
-* It's now possible to use the `predict.py` with compressed, custom model using `--model_dir` argument
 
 ## Contributing
 
