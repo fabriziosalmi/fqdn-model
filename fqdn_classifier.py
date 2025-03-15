@@ -22,7 +22,7 @@ import time
 import argparse
 import logging
 import wandb
-from typing import Optional
+from typing import Optional, List
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
@@ -31,7 +31,7 @@ from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, BarColumn, TimeRemainingColumn
 from rich.logging import RichHandler
-from rich.panel import Panel  # added import for Panel
+from rich.panel import Panel
 import joblib
 
 # Configure logging with RichHandler
@@ -47,14 +47,14 @@ log = logging.getLogger("rich")
 
 def plot_confusion_matrix(cm, classes, title='Confusion Matrix', cmap=plt.cm.Blues, filename="confusion_matrix.png"):
     """Plots a confusion matrix and saves it to a file."""
-    plt.figure(figsize=(8, 6))  # Adjust figure size for better visualization
+    plt.figure(figsize=(8, 6))
     sns.heatmap(cm, annot=True, fmt="d", cmap=cmap, xticklabels=classes, yticklabels=classes)
     plt.title(title)
     plt.ylabel('True label')
     plt.xlabel('Predicted label')
     plt.tight_layout()
-    plt.savefig(filename)  # Save the plot to a file
-    plt.close()  # Close the figure to free memory
+    plt.savefig(filename)
+    plt.close()
     log.info(f"Confusion matrix saved to {filename}")
 
 
@@ -87,34 +87,32 @@ def train_model(
     # --- Data Loading and Preprocessing ---
     with console.status("[bold green]Loading and preprocessing data..."):
         try:
-            df = pd.read_csv(data_path)
+            df = pd.read_json(data_path)
             log.info(f"Data loaded successfully from {data_path}")
         except (FileNotFoundError, pd.errors.EmptyDataError, Exception) as e:
             log.error(f"Error loading data: {e}")
             return
 
         df = df.drop(columns=['FQDN'])
-        df['Certificate_Issuer'] = df['Certificate_Issuer'].astype('category').cat.codes
 
-        # Separate features and target
-        X = df.drop(columns=['Overall_Status'])
-        y = df['Overall_Status']
+        # --- KEY CHANGE: Map Overall_Score to binary (0 and 1) ---
+        df['Overall_Score'] = df['Overall_Score'].map({1: 0, 2: 1})
+        # ---------------------------------------------------------
+
+        X = df.drop(columns=['Overall_Score'])
+        y = df['Overall_Score']
         feature_names = X.columns
 
-        # Split data *before* imputation to avoid data leakage
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=random_state, stratify=y)
 
-
-        # Impute missing values (only numeric columns) and drop remaining non-numeric
         numeric_cols = X_train.select_dtypes(include=[np.number]).columns
         imputer = SimpleImputer(strategy='mean')
 
-        if len(numeric_cols) > 0:  # Check if there are any numeric columns
+        if len(numeric_cols) > 0:
              X_train[numeric_cols] = imputer.fit_transform(X_train[numeric_cols])
              X_test[numeric_cols] = imputer.transform(X_test[numeric_cols])
         else:
              log.warning("No numeric columns found for imputation.")
-
 
         non_numeric_train = X_train.select_dtypes(exclude=[np.number]).columns
         if len(non_numeric_train) > 0:
@@ -126,26 +124,20 @@ def train_model(
             log.info(f"Dropping non-numeric columns from testing set: {list(non_numeric_test)}")
             X_test = X_test.drop(columns=non_numeric_test)
         
-        # Refill feature names
         feature_names = X_train.columns
-        
 
-
-    # --- Model Initialization ---
     if log_to_wandb:
         run = wandb.init(project=wandb_project, entity=wandb_entity, config=locals())
 
     if model_type == 'gaussian_nb':
         model = GaussianNB()
     elif model_type == 'logistic_regression':
-        model = LogisticRegression(penalty=lr_penalty, C=lr_C, solver=lr_solver, random_state=random_state, n_jobs=-1, max_iter=1000) # Increased max_iter
+        model = LogisticRegression(penalty=lr_penalty, C=lr_C, solver=lr_solver, random_state=random_state, n_jobs=-1, max_iter=1000)
     elif model_type == 'random_forest':
         model = RandomForestClassifier(n_estimators=rf_n_estimators, max_depth=rf_max_depth, min_samples_split=rf_min_samples_split, random_state=random_state, n_jobs=-1)
     else:
         raise ValueError(f"Invalid model_type: {model_type}. Choose from: gaussian_nb, logistic_regression, random_forest")
 
-
-    # --- Cross-validation and Model Training ---
     progress = Progress(
         "{task.description}",
         SpinnerColumn(),
@@ -168,8 +160,7 @@ def train_model(
         for fold, (train_index, val_index) in enumerate(kf.split(X_train, y_train)):
             X_train_fold, X_val_fold = X_train.iloc[train_index], X_train.iloc[val_index]
             y_train_fold, y_val_fold = y_train.iloc[train_index], y_train.iloc[val_index]
-            
-            # Apply transformations *inside* the loop to prevent data leakage
+
             X_train_fold_transformed = X_train_fold.copy()
             X_val_fold_transformed = X_val_fold.copy()
 
@@ -178,12 +169,10 @@ def train_model(
                 X_train_fold_transformed[numeric_cols] = scaler.fit_transform(X_train_fold_transformed[numeric_cols])
                 X_val_fold_transformed[numeric_cols] = scaler.transform(X_val_fold_transformed[numeric_cols])
 
-
             if use_quantile_transform:
                 quantile_transformer = QuantileTransformer(n_quantiles=n_quantiles, random_state=random_state, output_distribution='normal')
                 X_train_fold_transformed[numeric_cols] = quantile_transformer.fit_transform(X_train_fold_transformed[numeric_cols])
                 X_val_fold_transformed[numeric_cols] = quantile_transformer.transform(X_val_fold_transformed[numeric_cols])
-
 
             model.fit(X_train_fold_transformed, y_train_fold)
             val_preds = model.predict(X_val_fold_transformed)
@@ -193,19 +182,16 @@ def train_model(
 
             if fold_accuracy > best_cv_score:
                 best_cv_score = fold_accuracy
-                best_model = model  # Keep the *fitted* model from this fold
+                best_model = model
                 if use_scaler:
                     best_model_scaler = scaler
                 if use_quantile_transform:
                     best_model_transformer = quantile_transformer
 
-
         mean_cv_score = np.mean(cv_scores)
         std_cv_score = np.std(cv_scores)
         log.info(f"Cross-validation (accuracy) scores (mean ± std): {mean_cv_score:.4f} ± {std_cv_score:.4f}")
-    
-    # --- Final Model fitting ---
-    # Apply transformations to the entire training set
+
     if use_scaler:
         X_train[numeric_cols] = best_model_scaler.transform(X_train[numeric_cols])
         X_test[numeric_cols] = best_model_scaler.transform(X_test[numeric_cols])
@@ -213,39 +199,30 @@ def train_model(
         X_train[numeric_cols] = best_model_transformer.transform(X_train[numeric_cols])
         X_test[numeric_cols] = best_model_transformer.transform(X_test[numeric_cols])
 
-    # Fit best_model on the *entire* training set
     best_model.fit(X_train, y_train)
 
-    # --- Final Model Evaluation (on Test Set) ---
     y_pred = best_model.predict(X_test)
     if hasattr(best_model, "predict_proba"):
         y_pred_proba = best_model.predict_proba(X_test)
     else:
-        y_pred_proba = None  # For models that don't have predict_proba
+        y_pred_proba = None
 
     accuracy = accuracy_score(y_test, y_pred)
-    f1 = f1_score(y_test, y_pred, average='weighted')
-    precision = precision_score(y_test, y_pred, average='weighted')
-    recall = recall_score(y_test, y_pred, average='weighted')
+    f1 = f1_score(y_test, y_pred, average='weighted')  # Use 'binary' for binary classification
+    precision = precision_score(y_test, y_pred, average='weighted')  # Use 'binary'
+    recall = recall_score(y_test, y_pred, average='weighted')      # Use 'binary'
     report = classification_report(y_test, y_pred)
 
     if y_pred_proba is not None:
-        if len(np.unique(y_test)) > 2:  # Multiclass
-            roc_auc = roc_auc_score(y_test, y_pred_proba, multi_class="ovr")
-            logloss = log_loss(y_test, y_pred_proba)
-            # Brier score not applicable for multiclass; set brier to None
-            brier = None
-        else:  # Binary
-            roc_auc = roc_auc_score(y_test, y_pred_proba[:, 1])
-            logloss = log_loss(y_test, y_pred_proba[:, 1])
-            brier = brier_score_loss(y_test, y_pred_proba[:, 1])
-
+        #  Binary classification, so use y_pred_proba[:, 1] (probability of class 1)
+        roc_auc = roc_auc_score(y_test, y_pred_proba[:, 1])
+        logloss = log_loss(y_test, y_pred_proba[:, 1])
+        brier = brier_score_loss(y_test, y_pred_proba[:, 1])
     else:
         roc_auc, logloss, brier = None, None, None
 
     cm = confusion_matrix(y_test, y_pred)
 
-    # --- Rich Results Table ---
     results_table = Table(show_header=True, header_style="bold magenta")
     results_table.add_column("Metric", style="cyan", width=20)
     results_table.add_column("Value", style="green", width=15)
@@ -266,9 +243,8 @@ def train_model(
     console.print(Panel(f"\n[bold]Classification Report:[/]\n{report}"))
     console.print("\n[bold]Confusion Matrix:[/]")
     console.print(cm)
-    plot_confusion_matrix(cm, classes=np.unique(y_test))  # Use unique classes
+    plot_confusion_matrix(cm, classes=np.unique(y_test))
 
-    # --- Feature Importance ---
     if hasattr(best_model, "feature_importances_"):
         importances = best_model.feature_importances_
         feature_importance_table = get_feature_importance_table(importances, feature_names)
@@ -282,7 +258,6 @@ def train_model(
     else:
         console.print("\n[yellow]Feature importances not available for this model type.[/]")
 
-    # --- W&B Logging ---
     if log_to_wandb:
         wandb.log({
             "accuracy": accuracy,
@@ -296,30 +271,27 @@ def train_model(
             "cv_accuracy_std": std_cv_score,
             "confusion_matrix": wandb.plot.confusion_matrix(probs=None, y_true=y_test, preds=y_pred, class_names=np.unique(y_test)),
         })
-        if y_pred_proba is not None and len(np.unique(y_test)) == 2:  # Only for binary classification
+        if y_pred_proba is not None:
             wandb.log({"roc_curve": wandb.plot.roc_curve(y_test, y_pred_proba, labels=np.unique(y_test))})
         if hasattr(best_model, "feature_importances_") or hasattr(best_model, "coef_"):
              wandb.log({"feature_importances": wandb.Table(dataframe=pd.DataFrame({"feature": feature_names, "importance": importances}).sort_values("importance", ascending=False).head(10))})
         run.finish()
 
-    # --- Save Best Model and Preprocessing Steps ---
     os.makedirs(output_dir, exist_ok=True)
     joblib.dump(best_model, os.path.join(output_dir, f"{model_type}_best_model.joblib"))
     if best_model_scaler is not None:
         joblib.dump(best_model_scaler, os.path.join(output_dir, "scaler.joblib"))
     if best_model_transformer is not None:
         joblib.dump(best_model_transformer, os.path.join(output_dir, "quantile_transformer.joblib"))
-    if imputer is not None: # Save imputer
+    if imputer is not None:
         joblib.dump(imputer, os.path.join(output_dir, 'imputer.joblib'))
 
-    # --- Save Predictions if Flag is Set ---
     if save_predictions:
         predictions_filepath = os.path.join(output_dir, 'predictions.csv')
         pd.DataFrame({'Actual': y_test, 'Predicted': y_pred}).to_csv(predictions_filepath, index=False)
         log.info(f"Predictions saved to {predictions_filepath}")
 
     log.info(f"Best model and preprocessing steps saved to: [green]{output_dir}[/]")
-
     end_time = time.time()
     console.print(f"\n[bold]Total execution time:[/bold] {end_time - start_time:.2f} seconds")
 
@@ -341,8 +313,8 @@ def get_feature_importance_table(importances, feature_names):
 
 def main():
     parser = argparse.ArgumentParser(description="Train a model on a dataset.")
-    parser.add_argument("data_path", type=str, help="Path to the CSV dataset")
-    parser.add_argument("--model_type", type=str, default="gaussian_nb", choices=['gaussian_nb', 'logistic_regression', 'random_forest'], help="Type of model to train (fast methods only)")
+    parser.add_argument("data_path", type=str, help="Path to the JSON dataset")
+    parser.add_argument("--model_type", type=str, default="random_forest", choices=['gaussian_nb', 'logistic_regression', 'random_forest'], help="Type of model to train")
     parser.add_argument("--use_scaler", action="store_true", help="Use StandardScaler")
     parser.add_argument("--use_quantile_transform", action="store_true", help="Use QuantileTransformer")
     parser.add_argument("--n_quantiles", type=int, default=100, help="Number of quantiles for QuantileTransformer")
@@ -351,28 +323,25 @@ def main():
     parser.add_argument("--wandb_project", type=str, default=None, help="W&B project name")
     parser.add_argument("--wandb_entity", type=str, default=None, help="W&B entity name")
     parser.add_argument("--log_to_wandb", action="store_true", help="Log to Weights & Biases")
-    parser.add_argument("--test_size", type=float, default=0.2, help="the size for the test dataset")
+    parser.add_argument("--test_size", type=float, default=0.2, help="Size of the test dataset")
     parser.add_argument("--output_dir", type=str, default="models", help="Directory to save the best model")
 
-    # Logistic Regression arguments
     parser.add_argument("--lr_penalty", type=str, default='l2', choices=['l1', 'l2', 'elasticnet', 'none'], help="Penalty for Logistic Regression")
     parser.add_argument("--lr_C", type=float, default=1.0, help="Inverse of regularization strength for Logistic Regression")
-    parser.add_argument("--lr_solver", type=str, default='liblinear', choices=['liblinear', 'saga'], help="Solver (liblinear or saga for speed)")
+    parser.add_argument("--lr_solver", type=str, default='liblinear', choices=['liblinear', 'saga'], help="Solver for Logistic Regression")
 
-    # Random Forest arguments
     parser.add_argument("--rf_n_estimators", type=int, default=100, help="Number of trees in the Random Forest")
-    parser.add_argument("--rf_max_depth", type=int, default=10, help="Maximum depth of the trees")
-    parser.add_argument("--rf_min_samples_split", type=int, default=2, help="Minimum samples required to split a node")
-    parser.add_argument("--save_predictions", action="store_true", help="Save predictions to a CSV file after evaluation")
-    # Add verbose flag for debugging
+    parser.add_argument("--rf_max_depth", type=int, default=10, help="Maximum depth of trees in the Random Forest")
+    parser.add_argument("--rf_min_samples_split", type=int, default=2, help="Minimum samples required to split a node in the Random Forest")
+    parser.add_argument("--save_predictions", action="store_true", help="Save predictions to a CSV file")
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
-    
+
     args = parser.parse_args()
-    
+
     if args.verbose:
         log.setLevel("DEBUG")
         log.debug("Verbose logging enabled.")
-    
+
     train_model(
         args.data_path,
         args.model_type,

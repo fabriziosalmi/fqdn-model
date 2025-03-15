@@ -1,108 +1,166 @@
-import pandas as pd
+import json
 import argparse
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from tqdm import tqdm
-from colorama import Fore, Style, init
+from typing import List, Dict, Any
+from rich.progress import track
+from rich.console import Console
+from rich.table import Table
+from collections import defaultdict
 
-# Initialize colorama
-init(autoreset=True)
-
-def process_batch(batch_df, other_df):
+def merge_json_data(json_data_list: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     """
-    Processes a batch of FQDNs, prioritizing 'Is_Bad' = 0.
-
-    Args:
-        batch_df: DataFrame containing a batch of FQDNs.
-        other_df: The DataFrame to merge against (prioritized for 'Is_Bad' = 0).
-
-    Returns:
-        A DataFrame containing the processed batch.
+    Merges a list of JSON data (lists of dictionaries) into a single list of dictionaries.
+    Handles potential key collisions and missing keys gracefully.
     """
-    # Concatenate the batch with the other DataFrame
-    combined_df = pd.concat([batch_df, other_df], ignore_index=True)
+    merged_data: Dict[str, Dict[str, Any]] = {}
 
-    # Sort by FQDN and Is_Bad (ascending) to prioritize Is_Bad = 0
-    combined_df = combined_df.sort_values(by=['FQDN', 'Is_Bad'])
+    for json_data in json_data_list:
+        if not isinstance(json_data, list):
+            raise TypeError("Each element in json_data_list must be a list.")
 
-    # Drop duplicates, keeping the first occurrence (Is_Bad = 0 if available)
-    return combined_df.drop_duplicates(subset='FQDN', keep='first')
+        for entry in json_data:
+            if not isinstance(entry, dict):
+                raise TypeError("Each element within the inner lists must be a dictionary.")
+            if "FQDN" not in entry:
+                raise ValueError("Each dictionary must contain an 'FQDN' key.")
 
-def merge_csv_prioritize_good_parallel(file1_path, file2_path, output_path, batch_size=1000, num_workers=None):
-    """
-    Merges two CSV files, prioritizing rows where 'Is_Bad' is 0,
-    using parallel processing and displaying progress.
+            fqdn = entry["FQDN"]
+            if fqdn in merged_data:
+                merged_data[fqdn].update(entry)
+            else:
+                merged_data[fqdn] = entry.copy()
 
-    Args:
-        file1_path: Path to the first CSV file.
-        file2_path: Path to the second CSV file.
-        output_path: Path to save the merged CSV file.
-        batch_size: Number of rows to process in each batch.
-        num_workers: Number of worker processes to use (defaults to number of CPU cores).
-    """
+    return list(merged_data.values())
+
+
+
+def load_json_file(filepath: str) -> List[Dict[str, Any]]:
+    """Loads JSON data from a file, handling potential errors."""
     try:
-        # Read the smaller CSV file into memory (assuming file2 is smaller)
-        # We'll use this one to prioritize 'Is_Bad' = 0 during merging
-        df2 = pd.read_csv(file2_path)
-        df2 = df2.sort_values(by=['FQDN', 'Is_Bad'])  # Pre-sort df2 for efficiency
-        df2 = df2.drop_duplicates(subset='FQDN', keep='first') # Drop duplicates for best performace
-
-        # Get the total number of rows in the larger file (file1) for the progress bar
-        with open(file1_path, 'r') as f:
-            total_rows = sum(1 for _ in f) - 1  # Subtract 1 for the header row
-        
-        # Use ProcessPoolExecutor for parallel processing
-        with ProcessPoolExecutor(max_workers=num_workers) as executor:
-            futures = []
-            print(Fore.GREEN + "Starting parallel merge..." + Style.RESET_ALL)
-
-            # Create an iterator for reading file1 in batches
-            for chunk in pd.read_csv(file1_path, chunksize=batch_size):
-                # Submit each batch for processing
-                future = executor.submit(process_batch, chunk, df2)
-                futures.append(future)
-
-            # Collect results with a progress bar
-            results = []
-            with tqdm(total=total_rows, desc=Fore.CYAN + "Merging" + Style.RESET_ALL, unit="rows", colour="green") as pbar:
-                for future in as_completed(futures):
-                    try:
-                        result = future.result()
-                        results.append(result)
-                        pbar.update(len(result))  # Update based on processed rows in the result
-                    except Exception as e:
-                        print(Fore.RED + f"Error processing batch: {e}" + Style.RESET_ALL)
-
-            # Concatenate all processed batches
-            print(Fore.GREEN + "Concatenating results..." + Style.RESET_ALL)
-            df_merged = pd.concat(results, ignore_index=True)
-            df_merged = df_merged.sort_values(by=['FQDN', 'Is_Bad'])
-            df_merged = df_merged.drop_duplicates(subset='FQDN', keep='first')
-
-            # Save the merged DataFrame to a new CSV file
-            df_merged.to_csv(output_path, index=False)
-            print(Fore.GREEN + f"Files merged successfully. Output saved to: {output_path}" + Style.RESET_ALL)
-
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            if not isinstance(data, list):
+                raise ValueError(f"The JSON file {filepath} must contain a list of objects.")
+            return data
     except FileNotFoundError:
-        print(Fore.RED + "Error: One or both of the input CSV files were not found." + Style.RESET_ALL)
-    except pd.errors.EmptyDataError:
-        print(Fore.RED + "Error: One or both of the input CSV files are empty." + Style.RESET_ALL)
-    except pd.errors.ParserError:
-        print(Fore.RED + "Error: There was a problem parsing one of the CSV files.  Check for formatting issues." + Style.RESET_ALL)
+        print(f"Error: File not found: {filepath}")
+        exit(1)
+    except json.JSONDecodeError as e:
+        print(f"Error: Invalid JSON format in {filepath}: {e}")
+        exit(1)
+    except ValueError as e:
+        print(f"Error in {filepath}: {e}")
+        exit(1)
     except Exception as e:
-        print(Fore.RED + f"An unexpected error occurred: {e}" + Style.RESET_ALL)
+        print(f"An unexpected error occurred while loading {filepath}: {e}")
+        exit(1)
 
+
+
+def save_json_file(filepath: str, data: List[Dict[str, Any]]):
+    """Saves JSON data to a file, handling potential errors."""
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        print(f"Error saving to {filepath}: {e}")
+        exit(1)
+
+
+def calculate_statistics(data: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Calculates overall statistics from the merged data."""
+    stats = {
+        "total_fqdns": len(data),
+        "value_counts": defaultdict(lambda: {"0": 0, "1": 0, "2": 0})
+    }
+
+    for entry in data:
+        for key, value in entry.items():
+            if key != "FQDN":
+                if isinstance(value, int) and str(value) in ("0", "1", "2"):
+                    stats["value_counts"][key][str(value)] += 1
+
+    for key, counts in stats["value_counts"].items():
+        total_count = sum(counts.values())
+        stats["value_counts"][key]["0_percent"] = (counts["0"] / total_count) * 100 if total_count else 0
+        stats["value_counts"][key]["1_percent"] = (counts["1"] / total_count) * 100 if total_count else 0
+        stats["value_counts"][key]["2_percent"] = (counts["2"] / total_count) * 100 if total_count else 0
+
+    return stats
+
+def display_statistics(stats: Dict[str, Any], console: Console):
+    """Displays the calculated statistics in a formatted table."""
+
+    console.print("\n[bold underline]Overall Statistics:[/bold underline]")
+    console.print(f"Total FQDNs: [bold]{stats['total_fqdns']}[/bold]")
+
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Field")
+    table.add_column("Count (0)", justify="right")
+    table.add_column("Percent (0)", justify="right")
+    table.add_column("Count (1)", justify="right")
+    table.add_column("Percent (1)", justify="right")
+    table.add_column("Count (2)", justify="right")
+    table.add_column("Percent (2)", justify="right")
+
+    for field, counts in stats['value_counts'].items():
+        table.add_row(
+            f"[cyan]{field}[/cyan]",
+            f"[green]{counts['0']}[/green]",
+            f"[green]{counts['0_percent']:.2f}%[/green]",
+            f"[yellow]{counts['1']}[/yellow]",
+            f"[yellow]{counts['1_percent']:.2f}%[/yellow]",
+            f"[red]{counts['2']}[/red]",
+            f"[red]{counts['2_percent']:.2f}%[/red]"
+        )
+    console.print(table)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Merge two CSV files, prioritizing rows with 'Is_Bad' = 0.")
-    parser.add_argument("file1", help="Path to the first CSV file (larger file).")
-    parser.add_argument("file2", help="Path to the second CSV file (smaller file).")
-    parser.add_argument("output", help="Path to save the merged CSV file.")
-    parser.add_argument("-b", "--batch_size", type=int, default=1000, help="Batch size for processing (default: 1000).")
-    parser.add_argument("-n", "--num_workers", type=int, default=None, help="Number of worker processes (default: number of CPU cores).")
+    parser = argparse.ArgumentParser(description="Merge multiple JSON files containing website data.")
+    parser.add_argument('input_files', nargs='+', help='Paths to the input JSON files.')
+    parser.add_argument('-o', '--output', required=True, help='Path to the output JSON file.')
+    parser.add_argument('-v', '--verbose', action='store_true', help='Enable verbose output.  Includes FQDN count.') # Added to description
+    parser.add_argument('--show-table', action='store_true', help='Show a table of merged data before saving.')
+    parser.add_argument('--show-stats', action='store_true', help='Show overall statistics.')
+
     args = parser.parse_args()
 
-    merge_csv_prioritize_good_parallel(args.file1, args.file2, args.output, args.batch_size, args.num_workers)
+    console = Console()
+
+    all_json_data = []
+    for filename in track(args.input_files, description="Loading files...", console=console):
+        all_json_data.append(load_json_file(filename))
+
+    try:
+        merged_data = merge_json_data(all_json_data)
+    except (TypeError, ValueError) as e:
+        console.print(f"[red]Error during merging:[/red] {e}")
+        exit(1)
+
+    # FQDN Count Display (outside --verbose)
+    console.print(f"Total FQDNs processed: [bold]{len(merged_data)}[/bold]")
+
+    if args.verbose:
+        console.print(f"[green]Successfully merged {len(args.input_files)} files.[/green]")
+        # Removed redundant FQDN count here
+
+    if args.show_table:
+        table = Table(show_header=True, header_style="bold magenta")
+        if merged_data:
+            for key in merged_data[0].keys():
+                table.add_column(key)
+            for row in merged_data:
+                table.add_row(*[str(value) for value in row.values()])
+            console.print(table)
+        else:
+            console.print("[yellow]No data to display in the table.[/yellow]")
+
+    if args.show_stats:
+        stats = calculate_statistics(merged_data)
+        display_statistics(stats, console)
+
+    save_json_file(args.output, merged_data)
+    console.print(f"[green]Merged data saved to {args.output}[/green]")
 
 if __name__ == "__main__":
     main()

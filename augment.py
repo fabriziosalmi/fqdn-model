@@ -1,5 +1,4 @@
 import requests
-import csv
 import socket
 import dns.resolver
 import time
@@ -10,466 +9,440 @@ import concurrent.futures
 import os
 import signal
 import sys
-import pandas as pd
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
 import argparse
-from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn
+from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn, BarColumn, TextColumn
 from rich.console import Console
 import datetime
-import whois
 import tldextract
-from ipwhois import IPWhois
-from ipwhois.exceptions import ASNRegistryError
-import urllib3
+from functools import lru_cache, wraps
+import logging
+import configparser
+from multiprocessing import Value
+import json
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+try:
+    import whois
+    WHOIS_ENABLED = True
+except ImportError:
+    WHOIS_ENABLED = False
 
-# --- Configuration (Defaults) ---
-INPUT_FILE = 'fqdns.txt'
-OUTPUT_FILE = 'fqdn_analysis.csv'
-PROGRESS_FILE = 'fqdn_analysis_progress.txt'
-MAX_WORKERS = 10
-TIMEOUT = 0.2
-KEYWORDS = [
-    "login", "signin", "account", "verify", "secure", "update", "bank",
-    "payment", "free", "download", "admin", "password", "credential"
-]
-RETRY_DELAY = 0.5
-MAX_RETRIES = 1
-UNKNOWN_VALUE = 2  # Use 2 for all N/A, NULL, Unknown, Timeout cases
-RISKY_TLDS = ['.xyz', '.top', '.loan', '.online', '.club', '.click', '.icu', '.cn']
+config = configparser.ConfigParser()
+if os.path.exists('config.ini'):
+    config.read('config.ini')
 
-# --- Global Variables ---
+INPUT_FILE = config.get('DEFAULT', 'INPUT_FILE', fallback='fqdns.txt')
+OUTPUT_FILE = config.get('DEFAULT', 'OUTPUT_FILE', fallback='fqdn_analysis.json')
+PROGRESS_FILE = config.get('DEFAULT', 'PROGRESS_FILE', fallback='fqdn_analysis_progress.txt')
+MAX_WORKERS = config.getint('DEFAULT', 'MAX_WORKERS', fallback=32)
+TIMEOUT = config.getfloat('DEFAULT', 'TIMEOUT', fallback=1.0)
+UNKNOWN_VALUE = config.getint('DEFAULT', 'UNKNOWN_VALUE', fallback=2)
+RISKY_TLDS = config.get('DEFAULT', 'RISKY_TLDS', fallback='.xyz,.top,.loan,.online,.club,.click,.icu,.cn').split(',')
+MAX_REDIRECTS = config.getint('DEFAULT', 'MAX_REDIRECTS', fallback=5)
+NEGATIVE_CACHE_TTL = config.getint('DEFAULT', 'NEGATIVE_CACHE_TTL', fallback=30)
+POSITIVE_CACHE_TTL = config.getint('DEFAULT', 'POSITIVE_CACHE_TTL', fallback=3600)
+SHORTENER_DOMAINS = config.get('DEFAULT', 'SHORTENER_DOMAINS',
+                               fallback='bit.ly,t.co,tinyurl.com,ow.ly,is.gd,buff.ly,adf.ly').split(',')
+MAX_DOMAIN_LENGTH = config.getint('DEFAULT', 'MAX_DOMAIN_LENGTH', fallback=63)
+GOOD_DOMAIN_LENGTH = config.getint('DEFAULT', 'GOOD_DOMAIN_LENGTH', fallback=20)
+MAX_HYPHENS = config.getint('DEFAULT', 'MAX_HYPHENS', fallback=1)
+MAX_DIGITS = config.getint('DEFAULT', 'MAX_DIGITS', fallback=4)
+MAX_SUBDOMAINS = config.getint('DEFAULT', 'MAX_SUBDOMAINS', fallback=3)
+KEYWORDS = config.get('DEFAULT', 'KEYWORDS',
+                      fallback='login,signin,account,verify,secure,update,bank,payment,free,download,admin,password,credential').split(
+    ',')
+DNS_RESOLVERS = config.get('DEFAULT', 'DNS_RESOLVERS',
+                            fallback='1.1.1.1,1.0.0.1,8.8.8.8,8.8.4.4,208.67.222.222,208.67.220.220,9.9.9.9,149.112.112.112,4.2.2.2,4.2.2.1').split(
+    ',')
+WHOIS_TIMEOUT = config.getfloat('DEFAULT', 'WHOIS_TIMEOUT', fallback=2.0)
+
 processed_fqdns = set()
 shutdown_event = False
 console = Console()
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger()
 
-# --- Signal Handler ---
 def signal_handler(sig, frame):
     global shutdown_event
-    console.print("\n[red]Received interrupt signal. Shutting down gracefully...[/red]")
+    console.print("\n[red]Received interrupt signal. Shutting down...[/red]")
     shutdown_event = True
     sys.exit(1)
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
-
-# --- Helper Functions ---
-
 def load_progress():
-    """Loads progress from file."""
     if os.path.exists(PROGRESS_FILE):
-        with open(PROGRESS_FILE, 'r') as f:
-            return set(f.read().splitlines())
+        try:
+            with open(PROGRESS_FILE, 'r') as f:
+                return set(f.read().splitlines())
+        except Exception:
+            logger.error("Error loading progress")
+            return set()
     return set()
 
 def save_progress(fqdn):
-    """Saves progress to file."""
-    with open(PROGRESS_FILE, 'a') as f:
-        f.write(fqdn + '\n')
+    try:
+        with open(PROGRESS_FILE, 'a') as f:
+            f.write(fqdn + '\n')
+    except Exception:
+        logger.error("Error saving progress")
 
-def resolve_dns(fqdn):
-    """Resolves DNS records, handling timeouts."""
-    results = {}
-    for record_type in ['A', 'AAAA', 'MX', 'TXT']:
+def is_valid_ip(ip_address):
+    try:
+        socket.inet_pton(socket.AF_INET, ip_address)
+        return True
+    except socket.error:
         try:
-            resolver = dns.resolver.Resolver()
+            socket.inet_pton(socket.AF_INET6, ip_address)
+            return True
+        except socket.error:
+            return False
+
+def negative_cache(ttl):
+    def decorator(func):
+        cache = {}
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            key = (args, tuple(sorted(kwargs.items())))
+            if key in cache:
+                if time.time() - cache[key][0] < ttl:
+                    return cache[key][1]
+            result = func(*args, **kwargs)
+            cache[key] = (time.time(), result)
+            return result
+        return wrapper
+    return decorator
+
+@lru_cache(maxsize=1024)
+@negative_cache(ttl=NEGATIVE_CACHE_TTL)
+def resolve_dns(fqdn):
+    results = {
+        'DNS_A_Record': UNKNOWN_VALUE,
+        'DNS_AAAA_Record': UNKNOWN_VALUE,
+        'DNS_MX_Record': UNKNOWN_VALUE,
+        'DNS_TXT_Record': UNKNOWN_VALUE,
+        'DNS_CNAME_Record': UNKNOWN_VALUE,
+        'DNS_CNAME_Resolution': UNKNOWN_VALUE,
+    }
+
+    if is_valid_ip(fqdn):
+        results['DNS_A_Record'] = 0 if ":" not in fqdn else UNKNOWN_VALUE
+        results['DNS_AAAA_Record'] = 0 if ":" in fqdn else UNKNOWN_VALUE
+        return results
+
+    for record_type in ['A', 'AAAA', 'MX', 'TXT', 'CNAME']:
+        resolved = False
+        for resolver_ip in DNS_RESOLVERS:
+            resolver = dns.resolver.Resolver(configure=False)
+            resolver.nameservers = [resolver_ip]
             resolver.timeout = TIMEOUT
             resolver.lifetime = TIMEOUT
-            answers = resolver.resolve(fqdn, record_type)
-            # Convert to 1 if records exist, otherwise leave as initialized
-            results[record_type] = 1 if answers else 0
-            results[f'{record_type}_Records'] = ','.join([str(rdata) for rdata in answers]) if answers else "" # Keep the records for later
-        except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers, dns.exception.Timeout, dns.resolver.LifetimeTimeout):
-            results[record_type] = UNKNOWN_VALUE # DNS resolution failed
-            results[f'{record_type}_Records'] = ""
-        except Exception as e:
+            try:
+                record_present, _ = resolve_single_record(resolver, fqdn, record_type)
+                results[record_type] = record_present
+                if record_type == 'CNAME':
+                    results['DNS_CNAME_Resolution'] = record_present
+                resolved = True
+                break
+            except Exception:
+                pass
+
+        if not resolved:
             results[record_type] = UNKNOWN_VALUE
-            results[f'{record_type}_Records'] = ""
-            console.print(f"[yellow]DNS resolution error for {fqdn} ({record_type}): {e}[/yellow]")
     return results
 
-def get_domain_age(fqdn):
-    """Gets domain age (in days), returns 0/1/2."""
-    try:
-        w = whois.whois(fqdn)
-        if isinstance(w.creation_date, list):
-            creation_date = w.creation_date[0]
-        else:
-            creation_date = w.creation_date
+def resolve_single_record(resolver, fqdn, record_type, resolved_cnames=None):
+    if resolved_cnames is None:
+        resolved_cnames = set()
 
-        if creation_date:
-            age = (datetime.datetime.now() - creation_date).days
-            return 1 if age < 30 else 0  # 1 if "young" (bad), 0 if older
-        else:
-            return UNKNOWN_VALUE  # Couldn't determine age
+    if fqdn in resolved_cnames:
+        logger.warning(f"Circular CNAME detected for {fqdn}.")
+        return 1, ""
+
+    try:
+        answers = resolver.resolve(fqdn, record_type)
+        if record_type == 'CNAME':
+            for rdata in answers:
+                target = str(rdata.target).rstrip('.')
+                if target == fqdn:
+                    logger.warning(f"CNAME points to itself: {fqdn}")
+                    return 1, target
+                resolved_cnames.add(fqdn)
+                try:
+                    resolve_single_record(resolver, target, 'A', resolved_cnames)
+                    return 0, target
+                except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers,
+                        dns.exception.Timeout, dns.resolver.LifetimeTimeout):
+                    return 1, target
+        return 0, ""
+    except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.NoNameservers):
+        return 2, ""
+    except (dns.exception.Timeout, dns.resolver.LifetimeTimeout):
+        logger.debug(f"DNS resolution timeout ({record_type}) for {fqdn}")
+        return 2, ""
     except Exception:
-        return UNKNOWN_VALUE  # WHOIS failed
+        logger.error(f"DNS resolution error ({record_type}) for {fqdn}")
+        return 2, ""
 
-
-def get_certificate_expiry(cert):
-    """Checks if certificate is expired, returns 0/1/2."""
+def get_certificate_info(hostname):
     try:
-        expiry_date_str = cert.get('notAfter', '')
-        expiry_date = datetime.datetime.strptime(expiry_date_str, '%b %d %H:%M:%S %Y %Z')
-        return 0 if datetime.datetime.now() < expiry_date else 1  # 0 if valid, 1 if expired
-
+        with socket.create_connection((hostname, 443), timeout=TIMEOUT) as sock:
+            context = ssl.create_default_context()
+            with context.wrap_socket(sock, server_hostname=hostname) as ssock:
+                cert = ssock.getpeercert()
+                expiry_date_str = cert.get('notAfter', '')
+                expiry_date = datetime.datetime.strptime(expiry_date_str, '%b %d %H:%M:%S %Y %Z')
+                return 0 if datetime.datetime.now() < expiry_date else 1
+    except ssl.SSLCertVerificationError:
+        logger.debug(f"SSL certificate verification error for {hostname}")
+        return 2
     except Exception:
-        return UNKNOWN_VALUE  # Could not determine
+        logger.debug(f"Certificate retrieval error for {hostname}")
+        return 2
 
-
-def analyze_ip(ip_address):
-    """Analyzes IP, returns dict with 0/1/2 values."""
+def get_whois_info(domain):
+    if not WHOIS_ENABLED:
+        return {'WHOIS_Info_Available': 2, 'WHOIS_Age': UNKNOWN_VALUE}
     try:
-        obj = IPWhois(ip_address)
-        results = obj.lookup_rdap(depth=1)
-        #  Return 0/1/2. We don't have a good/bad definition here, so use presence/absence of data.
+        w = whois.whois(domain)
+        if w.status is None:
+            return {'WHOIS_Info_Available': 2, 'WHOIS_Age': UNKNOWN_VALUE}
+
+        creation_date = w.creation_date[0] if isinstance(w.creation_date, list) else w.creation_date
+        expiration_date = w.expiration_date[0] if isinstance(w.expiration_date, list) else w.expiration_date
+        updated_date = w.updated_date[0] if isinstance(w.updated_date, list) else w.updated_date
+
+        creation_date = creation_date if isinstance(creation_date, datetime.datetime) else None
+        expiration_date = expiration_date if isinstance(expiration_date, datetime.datetime) else None
+        updated_date = updated_date if isinstance(updated_date, datetime.datetime) else None
+
+        whois_age = (datetime.datetime.now() - creation_date).days / 365.25 if creation_date else None
+
+        # Convert dates to epoch timestamps or set to UNKNOWN_VALUE if None
+        creation_timestamp = int(creation_date.timestamp()) if creation_date else UNKNOWN_VALUE
+        expiration_timestamp = int(expiration_date.timestamp()) if expiration_date else UNKNOWN_VALUE
+        updated_timestamp = int(updated_date.timestamp()) if updated_date else UNKNOWN_VALUE
+        whois_age_value = int(whois_age) if whois_age is not None else UNKNOWN_VALUE
+
         return {
-            'ASN': 0 if results.get('asn') else UNKNOWN_VALUE,
-            'ASN_Country_Code': 0 if results.get('asn_country_code') else UNKNOWN_VALUE,
-            'ASN_Description': 0 if results.get('asn_description') else UNKNOWN_VALUE,
+            'WHOIS_Creation_Date': creation_timestamp,
+            'WHOIS_Expiration_Date': expiration_timestamp,
+            'WHOIS_Updated_Date': updated_timestamp,
+            'WHOIS_Age': whois_age_value,
+            'WHOIS_Info_Available': 0
         }
-    except (ASNRegistryError, ValueError, Exception):
-        return {
-            'ASN': UNKNOWN_VALUE,
-            'ASN_Country_Code': UNKNOWN_VALUE,
-            'ASN_Description': UNKNOWN_VALUE,
-        }
+    except whois.parser.PywhoisError:
+        logger.debug(f"WHOIS parsing error for {domain}")
+        return {'WHOIS_Info_Available': 2, 'WHOIS_Age': UNKNOWN_VALUE}
+    except Exception:
+        logger.warning(f"WHOIS lookup failed for {domain}")
+        return {'WHOIS_Info_Available': 2, 'WHOIS_Age': UNKNOWN_VALUE}
 
-def detect_keywords(fqdn, title):
-    """Detects keywords, returns 0/1."""
-    for keyword in KEYWORDS:
-        if keyword in fqdn.lower() or (title and keyword in title.lower()):
-            return 1  # Bad: keyword found
-    return 0  # Good: no keywords
+def detect_keywords(fqdn, title, body_text):
+    text = f"{fqdn} {title} {body_text}".lower()
+    return 1 if any(keyword in text for keyword in KEYWORDS) else 0
 
-def determine_overall_status(results):
-    """Determines overall status and Is_Bad using a scoring system."""
-    score = 0
+def is_url_shortener(fqdn):
+    domain = tldextract.extract(fqdn).domain
+    return 1 if domain + '.' + tldextract.extract(fqdn).suffix in SHORTENER_DOMAINS else 0
 
-    if results.get('Certificate_Valid') == 1:  # Certificate is invalid
-        score += 5
-    if results.get('Has_Suspicious_Keywords') == 1:
-        score += 5
-    if results.get('Status_Code_OK') == 0:
-        score += 4
-    if results.get('Final_Protocol_HTTPS') == 0:
-        score += 4
-    if results.get('High_Redirects') == 1:
-        score += 4
-    if results.get('Domain_Age') == 1:  # Domain is young
-        score += 4
-    if results.get('TLD') == 1: # TLD is risky
-        score += 3
-    if results.get('HSTS') == 0:
-        score += 3
-    content_type = results.get('Content_Type')
-    if content_type == 1:
-      score += 4
+def count_subdomains(fqdn):
+    ext = tldextract.extract(fqdn)
+    if not ext.subdomain:
+        return 0
+    subdomain_count = len(ext.subdomain.split('.'))
+    return 0 if subdomain_count <= MAX_SUBDOMAINS else 1
 
-    if score >= 10:
-        status = "Suspicious"
-        is_bad = 1  # Bad
-    elif score >= 5:
-        status = "Warning"
-        is_bad = UNKNOWN_VALUE  # Unknown
-    elif score > 0:
-        status = "Caution"
-        is_bad = UNKNOWN_VALUE  # Unknown
-    else:
-        status = "Good"
-        is_bad = 0  # Good
-
-    return status, is_bad
-
-
-def analyze_fqdn(fqdn, default_is_bad):
-    """Analyzes a single FQDN, all outputs 0/1/2."""
-
+def analyze_fqdn(fqdn, default_is_bad_numeric, whois_enabled):
     if fqdn in processed_fqdns:
         return None
 
-    results = {'FQDN': fqdn, 'Is_Bad': default_is_bad}
-    dns_results = resolve_dns(fqdn)
-    results.update(dns_results) # Includes both presence (0/1/2) and record strings.
+    results = {
+        'FQDN': fqdn,
+        'Overall_Score': default_is_bad_numeric,
+        'DNS_A_Record': UNKNOWN_VALUE,
+        'DNS_AAAA_Record': UNKNOWN_VALUE,
+        'DNS_MX_Record': UNKNOWN_VALUE,
+        'DNS_TXT_Record': UNKNOWN_VALUE,
+        'DNS_CNAME_Record': UNKNOWN_VALUE,
+        'DNS_CNAME_Resolution': UNKNOWN_VALUE,
+        'Certificate_Valid': UNKNOWN_VALUE,
+        'Status_Code_OK': UNKNOWN_VALUE,
+        'Final_Protocol_HTTPS': UNKNOWN_VALUE,
+        'HTTP_to_HTTPS_Redirect': UNKNOWN_VALUE,
+        'High_Redirects': UNKNOWN_VALUE,
+        'HSTS_Present': UNKNOWN_VALUE,
+        'Has_Suspicious_Keywords': UNKNOWN_VALUE,
+        'SSL_Verification_Failed': UNKNOWN_VALUE,
+        'Is_Risky_TLD': UNKNOWN_VALUE,
+        'Domain_Length': UNKNOWN_VALUE,
+        'Num_Hyphens': UNKNOWN_VALUE,
+        'Num_Digits': UNKNOWN_VALUE,
+        'Contains_IP_Address': UNKNOWN_VALUE,
+        'URL_Shortener': UNKNOWN_VALUE,
+        'Subdomain_Count': UNKNOWN_VALUE,
+        'Title_Length': UNKNOWN_VALUE,
+        'Body_Length': UNKNOWN_VALUE,
+    }
+    if whois_enabled:
+        results.update({
+            'WHOIS_Creation_Date': UNKNOWN_VALUE,
+            'WHOIS_Expiration_Date': UNKNOWN_VALUE,
+            'WHOIS_Updated_Date': UNKNOWN_VALUE,
+            'WHOIS_Age': UNKNOWN_VALUE,
+            'WHOIS_Info_Available': UNKNOWN_VALUE
+        })
 
-    results['Has_A_Record'] = dns_results.get('A', UNKNOWN_VALUE)
-    results['Has_AAAA_Record'] = dns_results.get('AAAA', UNKNOWN_VALUE)
-    results['Has_MX_Record'] = dns_results.get('MX', UNKNOWN_VALUE)
-    results['Has_TXT_Record'] = dns_results.get('TXT', UNKNOWN_VALUE)
-    results['A_Records'] = dns_results.get('A_Records', "") # Keep for later
-    results['AAAA_Records'] = dns_results.get('AAAA_Records', "")
-    results['MX_Records'] = dns_results.get('MX_Records', "")
-    results['TXT_Records'] = dns_results.get('TXT_Records', "")
-    results['Final_URL_Known'] = UNKNOWN_VALUE  # Default
-    results['Domain_Age'] = get_domain_age(fqdn) # Returns 0/1/2
-    results['TLD'] = UNKNOWN_VALUE # Initialize
-    extracted_tld = tldextract.extract(fqdn).suffix
-    if extracted_tld:
-      results['TLD'] = 1 if "." + extracted_tld in RISKY_TLDS else 0 # 1 if risky, 0 if not, 2 from init.
-    results['Content_Type'] = UNKNOWN_VALUE
-    results['Certificate_Issuer'] = UNKNOWN_VALUE # Initialize.
+    dns_checks = resolve_dns(fqdn)
+    results.update(dns_checks)
 
-    ip_analysis_results = {}
-    if results['Has_A_Record'] == 1: # Only analyze if A record exists
-        for ip_address in results['A_Records'].split(','):
-            ip_analysis_results[ip_address] = analyze_ip(ip_address)
-    results['IP_Analysis'] = ip_analysis_results
+    results['Is_Risky_TLD'] = 1 if "." + tldextract.extract(fqdn).suffix in RISKY_TLDS else 0
+    results['Domain_Length'] = 0 if len(fqdn) <= GOOD_DOMAIN_LENGTH else 1 if len(fqdn) <= MAX_DOMAIN_LENGTH else 1
+    results['Num_Hyphens'] = 0 if fqdn.count('-') <= MAX_HYPHENS else 1
+    results['Num_Digits'] = 0 if sum(c.isdigit() for c in fqdn) <= MAX_DIGITS else 1
+    results['Contains_IP_Address'] = 1 if any(part.isdigit() and int(part) <= 255 for part in fqdn.split(".")) else 0
+    results['URL_Shortener'] = is_url_shortener(fqdn)
+    results['Subdomain_Count'] = count_subdomains(fqdn)
 
-
-    for attempt in range(MAX_RETRIES):
-        try:
-            session = requests.Session()
-            session.max_redirects = 5
-            url = f"http://{fqdn}"
-            response = session.get(url, timeout=TIMEOUT, allow_redirects=True, verify=False)
-
+    try:
+        with requests.Session() as session:
+            session.max_redirects = MAX_REDIRECTS
+            response = session.get(f"http://{fqdn}", timeout=TIMEOUT, allow_redirects=True, verify=True)
             final_url = response.url
             parsed_url = urlparse(final_url)
-            results['Final_URL_Known'] = 1  # We know the final URL now
-            results['Final_Protocol_HTTPS'] = 1 if parsed_url.scheme == 'https' else 0
-            results['Status_Code_OK'] = 1 if 200 <= response.status_code < 300 else 0  # 1 if good, 0 bad
-            results['HTTP_to_HTTPS_Redirect'] = 1 if parsed_url.scheme == 'https' and response.history else 0
-            results['Redirects'] = len(response.history) # Keep raw number for viz
-            results['High_Redirects'] = 1 if len(response.history) > 3 else 0
-            content_type = response.headers.get('Content-Type', '').lower()
-            results['Content_Type'] = 1 if content_type != "" and 'html' not in content_type and 'text' not in content_type and 'json' not in content_type else 0 # 1 if suspicious
 
+            results['Status_Code_OK'] = 0 if 200 <= response.status_code < 300 else 1
+            results['Final_Protocol_HTTPS'] = 0 if parsed_url.scheme == 'https' else 1
+            results['High_Redirects'] = 1 if len(response.history) > 3 else 0
+            if response.history:
+                initial_url = response.history[0].url
+                if initial_url.startswith('http://') and final_url.startswith('https://'):
+                    results['HTTP_to_HTTPS_Redirect'] = 0
+                elif initial_url.startswith('https://') and final_url.startswith('http://'):
+                    results['HTTP_to_HTTPS_Redirect'] = 1
+                else:
+                    results['HTTP_to_HTTPS_Redirect'] = 2
+            else:
+                results['HTTP_to_HTTPS_Redirect'] = 2
+
+            results['HSTS_Present'] = 0 if 'strict-transport-security' in response.headers else 2
 
             if parsed_url.scheme == 'https':
-                try:
-                    ctx = ssl.create_default_context()
-                    ctx.check_hostname = False
-                    ctx.verify_mode = ssl.CERT_NONE
-                    with socket.create_connection((parsed_url.hostname, 443), timeout=TIMEOUT) as sock:
-                        with ctx.wrap_socket(sock, server_hostname=parsed_url.hostname) as ssock:
-                            cert = ssock.getpeercert()
-                            results['Certificate_Valid'] = 1  # Assume valid, then check
-                            results['Certificate_Expiry'] = get_certificate_expiry(cert)  # 0/1/2
-                            #Issuer
-                            for field in cert.get('issuer', []):
-                                for key, value in field:
-                                    if key == 'commonName':
-                                        # Check if we extracted the common name
-                                        results['Certificate_Issuer'] = 0 if value else UNKNOWN_VALUE
-                                        break
-                                else: continue
-                                break
-                            else: results['Certificate_Issuer'] = UNKNOWN_VALUE # Could not find Common Name
-                    results['HSTS'] = 1 if 'strict-transport-security' in response.headers else 0
-
-                    try:
-                        with socket.create_connection((parsed_url.hostname, 443), timeout=TIMEOUT) as sock:
-                            ctx = ssl.create_default_context()
-                            with ctx.wrap_socket(sock, server_hostname=parsed_url.hostname) as ssock:
-                                pass
-                    except (ssl.SSLError, socket.timeout, OSError, ValueError):
-                        results['Certificate_Valid'] = 1  # Now we know it's invalid
-
-                except (socket.timeout, OSError, ValueError):
-                    results.update({
-                        'Certificate_Issuer': UNKNOWN_VALUE,
-                        'Certificate_Valid': 1,
-                        'Certificate_Expiry': UNKNOWN_VALUE,
-                        'HSTS': UNKNOWN_VALUE
-                    })
+                results['Certificate_Valid'] = get_certificate_info(parsed_url.hostname)
             else:
-                results.update({
-                    'Certificate_Issuer': UNKNOWN_VALUE,
-                    'Certificate_Valid': 1,
-                    'Certificate_Expiry': UNKNOWN_VALUE,
-                    'HSTS': UNKNOWN_VALUE
-                })
+                results['Certificate_Valid'] = 2
 
-            if 200 <= response.status_code < 300:
+            if 200 <= response.status_code < 300 and 'html' in response.headers.get('Content-Type', '').lower():
                 try:
                     soup = BeautifulSoup(response.text, 'html.parser')
-                    title = soup.title.string.strip() if soup.title else "" # Check if there is a title
-                    results['Has_Suspicious_Keywords'] = detect_keywords(fqdn, title) # returns 0/1
-
+                    title = soup.title.string.strip() if soup.title and soup.title.string else ""
+                    body_text = soup.body.get_text(separator=" ", strip=True) if soup.body else ""
+                    results['Has_Suspicious_Keywords'] = detect_keywords(fqdn, title, body_text)
+                    results['Title_Length'] = 0 if title else 2 # 0 if title exists, 2 if doesn't
+                    results['Body_Length'] = 0 if body_text else 2  # 0 if body exists, 2 if it doesn't.
                 except Exception:
+                    logger.error(f"Error parsing HTML for {fqdn}")
                     results['Has_Suspicious_Keywords'] = UNKNOWN_VALUE
-            else:
-                results['Has_Suspicious_Keywords'] = UNKNOWN_VALUE  # Couldn't get content
+                    results['Title_Length'] = UNKNOWN_VALUE
+                    results['Body_Length'] = UNKNOWN_VALUE
 
-            break  # Success, exit retry loop
+    except requests.exceptions.SSLError:
+        logger.debug(f"SSL verification failed for {fqdn}")
+        results['SSL_Verification_Failed'] = 1
+        results['Certificate_Valid'] = 2
+    except requests.exceptions.RequestException:
+        logger.debug(f"Request failed for {fqdn}")
+        results['Status_Code_OK'] = 2
+        results['Final_Protocol_HTTPS'] = 2
+        results['HTTP_to_HTTPS_Redirect'] = 2
+        results['High_Redirects'] = 2
+        results['HSTS_Present'] = 2
+        results['Certificate_Valid'] = 2
 
-        except requests.exceptions.RequestException as e:
-            results.update({
-                'Status_Code_OK': UNKNOWN_VALUE,
-                'Final_URL_Known': UNKNOWN_VALUE,
-                'Final_Protocol_HTTPS': UNKNOWN_VALUE,
-                'HTTP_to_HTTPS_Redirect': UNKNOWN_VALUE,
-                'Redirects': UNKNOWN_VALUE,
-                'High_Redirects': UNKNOWN_VALUE,
-                'HSTS': UNKNOWN_VALUE,
-                'Certificate_Valid': UNKNOWN_VALUE,
-                'Certificate_Issuer': UNKNOWN_VALUE,
-                'Certificate_Expiry': UNKNOWN_VALUE,
-                'Content_Type': UNKNOWN_VALUE,
-                'Has_Suspicious_Keywords' : UNKNOWN_VALUE
-            })
-            if attempt < MAX_RETRIES - 1:
-                console.print(f"[yellow]Request failed for {fqdn}: {e}. Retrying in {RETRY_DELAY} seconds...[/yellow]")
-                time.sleep(RETRY_DELAY)
-            else:
-                console.print(f"[red]Max retries reached for {fqdn}.[/red]")
+    if whois_enabled:
+        whois_info = get_whois_info(fqdn)
+        results.update(whois_info)
+        # WHOIS_Age is already set to UNKNOWN_VALUE if unavailable
 
-    # Final Is_Bad determination, respecting default if inconclusive
-    status, is_bad = determine_overall_status(results)
-    results['Overall_Status'] = status  # Keep string for viz
-
-    # IMPORTANT: If analysis was inconclusive, use the *default* Is_Bad
-    if results['Overall_Status'] == "Caution" or results['Overall_Status'] == "Warning":
-          results['Is_Bad'] = default_is_bad if default_is_bad!= UNKNOWN_VALUE else UNKNOWN_VALUE
-    else: # If Good or Suspicious
-          results['Is_Bad'] = is_bad # 0 or 1
-
+    results['Overall_Score'] = calculate_overall_score(results, default_is_bad_numeric)
     return results
 
+def calculate_overall_score(results, default_is_bad_numeric):
+    if results['SSL_Verification_Failed'] == 1:
+        return 1
+    if results['Certificate_Valid'] == 1:
+        return 1
+    if results['Has_Suspicious_Keywords'] == 1:
+        return 1
 
-def process_batch(fqdns, default_is_bad):
-    """Processes FQDNs concurrently."""
+    bad_indicators = [
+        'Is_Risky_TLD', 'Status_Code_OK', 'High_Redirects', 'Domain_Length',
+        'Num_Hyphens', 'Num_Digits', 'Contains_IP_Address', 'URL_Shortener',
+        'DNS_CNAME_Resolution'
+    ]
+    if any(results[indicator] == 1 for indicator in bad_indicators):
+        return 1
+
+    unknown_indicators = [
+        'DNS_A_Record', 'DNS_AAAA_Record', 'DNS_MX_Record', 'DNS_TXT_Record',
+        'DNS_CNAME_Resolution',
+        'Certificate_Valid', 'Status_Code_OK', 'Final_Protocol_HTTPS',
+        'HTTP_to_HTTPS_Redirect', 'High_Redirects', 'HSTS_Present',
+        'Has_Suspicious_Keywords', 'SSL_Verification_Failed', 'Subdomain_Count',
+        'WHOIS_Info_Available', 'WHOIS_Age'
+    ]
+    if any(results[indicator] == 2 for indicator in unknown_indicators):
+        return 2
+
+    return 0
+
+def process_batch(fqdns, default_is_bad_numeric, progress, task, whois_enabled, bytes_read, non_unknown_count):
     with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        with Progress(
-            SpinnerColumn(),
-            *Progress.get_default_columns(),
-            TimeElapsedColumn(),
-            console=console,
-            transient=False
-        ) as progress:
-            task = progress.add_task("[cyan]Processing FQDNs[/cyan]", total=len(fqdns))
-            futures = {executor.submit(analyze_fqdn, fqdn, default_is_bad): fqdn for fqdn in fqdns}
-
-            for future in concurrent.futures.as_completed(futures):
-                if shutdown_event:
-                    break
-                fqdn = futures[future]
-                try:
-                    result = future.result()
-                    if result:
-                        yield result
-                        save_progress(fqdn)
-                        processed_fqdns.add(fqdn)
-                except Exception as e:
-                    console.print(f"[red]Error processing {fqdn}: {e}[/red]")
-                finally:
-                    progress.update(task, advance=1)
-
-def generate_visualizations(df):
-    """Generates visualizations (handles numeric data)."""
-
-    def create_pie_chart(df, column, title, value_map=None):
-        if column in df.columns and not df[column].isnull().all():
-            counts = df[column].value_counts().reset_index()
-            counts.columns = [column, 'Count']
-            # If a value map is provided, try to apply it
-            if value_map:
-              try:
-                counts[column] = counts[column].map(value_map)
-              except: # in case of mixed data types
-                pass
-            fig = px.pie(counts, values='Count', names=column, title=title,
-                         color_discrete_sequence=px.colors.qualitative.Set1)
-            return fig
-        else:
-            fig = go.Figure()
-            fig.update_layout(title_text=f"{title} (Data Not Available)")
-            return fig
-
-
-    def create_bar_chart(df, column, title, color=None, value_map=None, angle=0, numeric=False):
-      if column in df.columns and not df[column].isnull().all():
-          if numeric:
-            # If it's a numeric column, convert to numeric and handle errors.
-            df[column] = pd.to_numeric(df[column], errors='coerce')
-            counts = df[column].value_counts().nlargest(10).reset_index()
-          else: # not numeric
-            counts = df[column].value_counts().nlargest(10).reset_index()
-          counts.columns = [column, 'Count']
-          if value_map:
+        futures = {executor.submit(analyze_fqdn, fqdn, default_is_bad_numeric, whois_enabled): fqdn for fqdn in fqdns}
+        for future in concurrent.futures.as_completed(futures):
+            if shutdown_event:
+                return
+            fqdn = futures[future]
             try:
-              counts[column] = counts[column].map(value_map)
-            except:
-              pass
-          fig = px.bar(counts, x=column, y='Count', title=title,
-                      color=color, color_discrete_sequence=px.colors.qualitative.Pastel1)
-          fig.update_layout(xaxis_tickangle=angle)
-          return fig
-      else: # Data not available
-          fig = go.Figure()
-          fig.update_layout(title_text=f"{title} (Data Not Available)")
-          return fig
-
-
-    protocol_map = {0: 'HTTP', 1: 'HTTPS', 2: 'Unknown'}
-    keyword_map = {0: 'No', 1: 'Yes', 2: 'Unknown'}
-    is_bad_map = {0: 'Good', 1: 'Bad', 2: 'Unknown'}
-
-    fig_status = create_pie_chart(df, 'Overall_Status', 'Distribution of Overall Status')
-    fig_protocol = create_bar_chart(df, 'Final_Protocol_HTTPS', 'HTTP vs HTTPS', color='Final_Protocol_HTTPS', value_map=protocol_map)
-    fig_redirects = create_bar_chart(df, 'Redirects', "Distribution of Redirects", numeric=True)
-    fig_issuer = create_bar_chart(df, 'Certificate_Issuer', 'Top 10 Certificate Issuers', color='Certificate_Issuer', angle=-45) # Don't apply value map as values can be many
-    fig_keywords = create_pie_chart(df, 'Has_Suspicious_Keywords', 'Suspicious Keywords Found', value_map=keyword_map)
-    fig_is_bad = create_pie_chart(df, 'Is_Bad', 'Is Bad Distribution', value_map=is_bad_map)
-    fig_domain_age =  create_bar_chart(df, 'Domain_Age', "Domain Age Distribution", numeric=True)
-    fig_tld = create_bar_chart(df, 'TLD', 'Top 10 TLDs', color='TLD', angle=-45)
-
-    # --- Combined Dashboard ---
-    fig = make_subplots(
-      rows=4, cols=2,
-      specs=[[{"type": "pie"}, {"type": "bar"}],
-              [{"type": "bar"}, {"type": "bar"}],
-              [{"type": "pie"}, {"type": "pie"}],
-              [{"type": "bar"}, {"type": "bar"}]],
-      subplot_titles=("Overall Status", "HTTP vs HTTPS", "Redirects",
-                      "Top 10 Certificate Issuers", "Suspicious Keywords", "Is Bad",
-                      "Domain Age", "Top 10 TLDs"),
-      vertical_spacing=0.1,
-      horizontal_spacing=0.1
-    )
-
-    if fig_status and 'data' in fig_status and len(fig_status['data']) > 0:
-        fig.add_trace(fig_status['data'][0], row=1, col=1)
-    if fig_protocol and 'data' in fig_protocol and len(fig_protocol['data']) > 0:
-        fig.add_trace(fig_protocol['data'][0], row=1, col=2)
-    if fig_redirects and 'data' in fig_redirects and len(fig_redirects['data']) > 0:
-        fig.add_trace(fig_redirects['data'][0], row=2, col=1)
-    if fig_issuer and 'data' in fig_issuer and len(fig_issuer['data'])>0:
-        fig.add_trace(fig_issuer['data'][0], row=2, col=2)
-    if fig_keywords and 'data' in fig_keywords and len(fig_keywords['data']) > 0:
-        fig.add_trace(fig_keywords['data'][0], row=3, col=1)
-    if fig_is_bad and 'data' in fig_is_bad and len(fig_is_bad['data']) > 0:
-        fig.add_trace(fig_is_bad['data'][0], row=3, col=2)
-    if fig_domain_age and 'data' in fig_domain_age and len(fig_domain_age['data']) > 0:
-        fig.add_trace(fig_domain_age['data'][0], row=4, col=1)
-    if fig_tld and 'data' in fig_tld and len(fig_tld['data'])>0:
-        fig.add_trace(fig_tld['data'][0], row=4, col=2)
-
-    fig.update_layout(title_text="FQDN Analysis Dashboard", title_x=0.5, height=1200)
-    fig.write_html("fqdn_analysis_dashboard.html")
-
-
+                result = future.result()
+                if result:
+                    yield result
+                    save_progress(fqdn)
+                    processed_fqdns.add(fqdn)
+                    bytes_read.value += len((fqdn + '\n').encode('utf-8'))
+                    if result['Overall_Score'] != UNKNOWN_VALUE:
+                        non_unknown_count.value += 1
+            except Exception:
+                logger.exception(f"Error processing {fqdn}")
+            finally:
+                progress.update(task, advance=1)
 
 def main():
-    global processed_fqdns, MAX_WORKERS, TIMEOUT, INPUT_FILE, OUTPUT_FILE, PROGRESS_FILE, KEYWORDS, RISKY_TLDS
+    global processed_fqdns, MAX_WORKERS, TIMEOUT, INPUT_FILE, OUTPUT_FILE, PROGRESS_FILE, KEYWORDS, RISKY_TLDS, DNS_RESOLVERS, WHOIS_TIMEOUT, POSITIVE_CACHE_TTL, NEGATIVE_CACHE_TTL, UNKNOWN_VALUE
 
-    parser = argparse.ArgumentParser(description="Analyze FQDNs (no external APIs).")
-    parser.add_argument("-i", "--input", help="Input file with FQDNs", required=True)
-    parser.add_argument("-o", "--output", help="Output CSV file", default=OUTPUT_FILE)
+    parser = argparse.ArgumentParser(description="Analyze FQDNs for security risks.")
+    parser.add_argument("-i", "--input", help="Input file with FQDNs", default=INPUT_FILE)
+    parser.add_argument("-o", "--output", help="Output JSON file", default=OUTPUT_FILE)
     parser.add_argument("-p", "--progress", help="Progress file", default=PROGRESS_FILE)
-    parser.add_argument("-w", "--workers", type=int, help="Number of workers", default=MAX_WORKERS)
-    parser.add_argument("-t", "--timeout", type=int, help="Timeout (seconds)", default=TIMEOUT)
+    parser.add_argument("-w", "--workers", type=int, help="Worker threads", default=MAX_WORKERS)
+    parser.add_argument("-t", "--timeout", type=float, help="Request timeout", default=TIMEOUT)
     parser.add_argument("-k", "--keywords", help="Suspicious keywords", default=",".join(KEYWORDS))
     parser.add_argument("--risky-tlds", help="Risky TLDs", default=",".join(RISKY_TLDS))
-    parser.add_argument("--is_bad", type=int, choices=[0, 1, 2], help="Force Is_Bad label (0=good, 1=bad, 2=unknown)")
-    parser.add_argument("--no-visualizations", action="store_true", help="Disable visualizations")
-
+    parser.add_argument("--dns-resolvers", help="DNS resolvers (comma-separated)", default=None)
+    parser.add_argument("--is_bad", type=str, choices=["Yes", "No", "Unknown"],
+                        help="Default Is_Bad (0=No, 1=Yes, 2=Unknown)", default="Unknown")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
+    parser.add_argument("--whois", action="store_true", help="Enable WHOIS lookups (requires python-whois)")
+    parser.add_argument("--whois-timeout", type=float, help="Timeout for WHOIS lookups", default=WHOIS_TIMEOUT)
+    parser.add_argument("--positive-cache-ttl", type=int, help="Positive cache TTL in seconds", default=POSITIVE_CACHE_TTL)
+    parser.add_argument("--negative-cache-ttl", type=int, help="Negative cache TTL in seconds", default=NEGATIVE_CACHE_TTL)
+    parser.add_argument("--config", help="Path to configuration file", default="config.ini")
     args = parser.parse_args()
+
+    config = configparser.ConfigParser()
+    if os.path.exists(args.config):
+        config.read(args.config)
 
     INPUT_FILE = args.input
     OUTPUT_FILE = args.output
@@ -478,97 +451,103 @@ def main():
     TIMEOUT = args.timeout
     KEYWORDS = args.keywords.split(",")
     RISKY_TLDS = args.risky_tlds.split(",")
-    default_is_bad = args.is_bad if args.is_bad is not None else UNKNOWN_VALUE
+    WHOIS_TIMEOUT = args.whois_timeout
+    default_is_bad = args.is_bad
+    POSITIVE_CACHE_TTL = args.positive_cache_ttl
+    NEGATIVE_CACHE_TTL = args.negative_cache_ttl
+    default_is_bad_numeric = {"Yes": 1, "No": 0, "Unknown": 2}.get(default_is_bad, 2)
+    whois_enabled = args.whois and WHOIS_ENABLED
+
+    if args.dns_resolvers:
+        DNS_RESOLVERS = args.dns_resolvers.split(",")
+        if not all(is_valid_ip(r) for r in DNS_RESOLVERS):
+            console.print(f"[red]Invalid DNS resolver IP[/red]")
+            sys.exit(1)
+    elif config.has_option('DEFAULT', 'DNS_RESOLVERS'):
+        DNS_RESOLVERS = config.get('DEFAULT', 'DNS_RESOLVERS').split(',')
+
+    if args.verbose:
+        logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.INFO)
 
     processed_fqdns = load_progress()
     all_fqdns = []
 
-    with open(INPUT_FILE, 'r') as infile:
-        for line in infile:
-            all_fqdns.append(line.strip())
+    try:
+        with open(INPUT_FILE, 'r') as infile:
+            all_fqdns = [line.strip() for line in infile if line.strip() and not line.startswith('#')]
+    except FileNotFoundError:
+        console.print(f"[red]Error: Input file '{INPUT_FILE}' not found.[/red]")
+        sys.exit(1)
+    except Exception:
+        logger.error("Error reading input file")
+        sys.exit(1)
 
-    csv_header = [
-      'FQDN', 'Is_Bad', 'Has_A_Record', 'Has_AAAA_Record', 'Has_MX_Record',
-      'Has_TXT_Record', 'A_Records', 'AAAA_Records', 'MX_Records', 'TXT_Records',
-      'Final_Protocol_HTTPS', 'Status_Code_OK', 'HTTP_to_HTTPS_Redirect',
-      'High_Redirects', 'Redirects', 'HSTS', 'Certificate_Valid',
-      'Has_Suspicious_Keywords', 'Final_URL_Known', 'Certificate_Issuer',
-      'Certificate_Expiry', 'Domain_Age', 'TLD', 'Content_Type', 'IP_Analysis',
-      'Overall_Status'
-    ]
+    total_file_size = os.path.getsize(INPUT_FILE)
+    total_file_size_mb = total_file_size / (1024 * 1024)
 
-    file_exists = os.path.exists(OUTPUT_FILE)
-    if file_exists:
-        try:
-            with open(OUTPUT_FILE, 'r', newline='', encoding='utf-8') as f:
-                reader = csv.reader(f)
-                existing_header = next(reader)
-                header_matches = existing_header == csv_header
-        except StopIteration:
-            header_matches = False
-    else:
-        header_matches = False
+    json_data = []
 
-    with open(OUTPUT_FILE, 'a', newline='', encoding='utf-8') as outfile:
-        writer = csv.writer(outfile)
-        if not file_exists or not header_matches:
-            writer.writerow(csv_header)
+    fqdns_to_process = [fqdn for fqdn in all_fqdns if fqdn not in processed_fqdns]
+    total_to_process = len(fqdns_to_process)
+    bytes_read = Value('l', 0)
+    non_unknown_count = Value('i', 0)
 
-        for results in process_batch(all_fqdns, default_is_bad):
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("Processed: {task.percentage:.1f}%"),
+        TextColumn("MB: {task.fields[mb_processed]:.2f}/{task.fields[total_mb]:.2f}"),
+        TextColumn("Non-Unknown: {task.fields[non_unknown_percent]:.1f}%"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=False
+    ) as progress:
+
+        task = progress.add_task("[cyan]Processing FQDNs[/cyan]", total=total_to_process,
+                                 mb_processed=0, total_mb=total_file_size_mb, non_unknown_percent=0)
+
+        for results in process_batch(fqdns_to_process, default_is_bad_numeric, progress, task, whois_enabled, bytes_read, non_unknown_count):
             if shutdown_event:
                 break
-            try:
-                ip_analysis_str = ""
-                for ip, analysis in results.get('IP_Analysis', {}).items():
-                    #  Convert IP analysis to 0/2
-                    asn = analysis.get('ASN', UNKNOWN_VALUE)
-                    country = analysis.get('ASN_Country_Code', UNKNOWN_VALUE)
-                    desc = analysis.get('ASN_Description', UNKNOWN_VALUE)
-                    ip_analysis_str += f"{ip}: (ASN={asn}, Country={country}, Description={desc}); "
+
+            json_result = {}
+            for key, value in results.items():
+                # Special handling for WHOIS date fields: convert to epoch or keep as UNKNOWN_VALUE
+                if key in ('WHOIS_Creation_Date', 'WHOIS_Expiration_Date', 'WHOIS_Updated_Date'):
+                     json_result[key] = value
+                # Keep FQDN as is
+                elif key == 'FQDN':
+                    json_result[key] = value
+                # Ensure all other values are integers (0, 1, or 2)
+                else:
+                    try:
+                        json_result[key] = int(value)  # Convert to integer
+                    except (ValueError, TypeError):
+                        json_result[key] = UNKNOWN_VALUE  # Default to UNKNOWN_VALUE on conversion failure
+
+            json_data.append(json_result)
 
 
-                writer.writerow([
-                    results['FQDN'], results['Is_Bad'], results['Has_A_Record'],
-                    results['Has_AAAA_Record'], results['Has_MX_Record'],
-                    results['Has_TXT_Record'], results['A_Records'], results['AAAA_Records'],
-                    results['MX_Records'], results['TXT_Records'],
-                    results['Final_Protocol_HTTPS'], results['Status_Code_OK'],
-                    results['HTTP_to_HTTPS_Redirect'], results['High_Redirects'],
-                    results['Redirects'], results['HSTS'], results['Certificate_Valid'],
-                    results['Has_Suspicious_Keywords'], results['Final_URL_Known'],
-                    results['Certificate_Issuer'], results['Certificate_Expiry'],
-                    results['Domain_Age'], results['TLD'], results['Content_Type'],
-                    ip_analysis_str, results['Overall_Status']
-                ])
-            except Exception as e:
-                console.print(f"[red]Error writing row: {e}[/red]")
+            mb_processed = bytes_read.value / (1024 * 1024)
+            non_unknown_percent = (non_unknown_count.value / total_to_process) * 100 if total_to_process > 0 else 0.0
+            progress.update(task, mb_processed=mb_processed, non_unknown_percent=non_unknown_percent, advance=1)
 
-    if shutdown_event:
-        pass
-    else:
+    with open(OUTPUT_FILE, 'w', encoding='utf-8') as outfile:
+        json.dump(json_data, outfile, indent=4)
+
+
+    if not shutdown_event:
         console.print("[green]Processing complete.[/green]")
         if os.path.exists(PROGRESS_FILE):
-            os.remove(PROGRESS_FILE)
-
-        if not args.no_visualizations:
             try:
-                df = pd.read_csv(OUTPUT_FILE)
-                # Convert relevant columns to numeric where appropriate.
-                for col in ['Is_Bad','Has_A_Record','Has_AAAA_Record','Has_MX_Record','Has_TXT_Record','Final_Protocol_HTTPS','Status_Code_OK',
-                            'HTTP_to_HTTPS_Redirect','High_Redirects','HSTS','Certificate_Valid','Has_Suspicious_Keywords',
-                            'Final_URL_Known', 'Domain_Age', 'Redirects']:
-                    if col in df.columns:
-                        df[col] = pd.to_numeric(df[col], errors='coerce')
-
-                # Ensure object columns are strings, which handles mixed types and N/A well.
-                for col in ['Overall_Status', 'Certificate_Issuer', 'TLD', 'Content_Type', 'A_Records', 'AAAA_Records', 'MX_Records', 'TXT_Records','IP_Analysis']:
-                    if col in df.columns:
-                        df[col] = df[col].astype(str)
-
-                generate_visualizations(df)
-                console.print("[green]Visualizations generated: fqdn_analysis_dashboard.html[/green]")
-            except Exception as e:
-                console.print(f"[red]Error generating visualizations: {e}[/red]")
+                os.remove(PROGRESS_FILE)
+            except Exception:
+                logger.error("Error removing progress file")
+    else:
+        console.print("[yellow]Processing interrupted. Progress saved.[/yellow]")
 
 if __name__ == "__main__":
     main()
