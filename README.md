@@ -91,22 +91,22 @@ This project provides a reliable and easy-to-use tool for classifying FQDNs. It 
 
     The `augment.py` script now supports additional parameters for improved domain analysis. For example:
     ```bash
-    python augment.py -i whitelist.txt -o whitelist.csv --is_bad 0 --dns-resolvers 1.1.1.1,8.8.8.8 --whois
-    python augment.py -i blacklist.txt -o blacklist.csv --is_bad 1 --dns-resolvers 1.1.1.1,8.8.8.8 --whois
+    python augment.py -i blacklist.txt -o blacklist.json --is_bad 1 --dns-resolvers 1.1.1.1,8.8.8.8 --whois
+    python augment.py -i whitelist.txt -o whitelist.json --is_bad 0 --dns-resolvers 1.1.1.1,8.8.8.8 --whois
     ```
 
 3.  **Merge Datasets**
 
     Combine the augmented CSV files using the `merge_datasets.py` script:
     ```bash
-    python merge_datasets.py whitelist.csv blacklist.csv dataset.csv
+    python merge_datasets.py blacklist.json whitelist.json -o dataset.json
     ```
 
 4.  **Train and Save Best Model**
 
     Train the model using the merged dataset with the `fqdn_classifier.py` script:
     ```bash
-    python fqdn_classifier.py dataset.csv
+    python fqdn_classifier.py dataset.json
     ```
 
     This updated training process leverages the enhanced feature extraction and improved error handling.
