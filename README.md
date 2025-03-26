@@ -369,11 +369,3 @@ If you have any questions or suggestions, feel free to open an issue or contact 
 ## Configuration Details
 
 The configuration file (`config.ini`) in the repository allows you to customize parameters such as DNS resolvers, timeouts, and others. Refer to the comments within `config.ini` for detailed explanations of each parameter.
-
-## Changelog
-
-* **v1.1** – Updated documentation:
-   - Fixed typos (“docuemntnation” → “documentation”)
-   - Updated prediction script name to `predict.py`
-   - Extended documentation with configuration details and a changelog section.
-* **v1.0** – Initial release with FQDN classification using Random Forest along with support for advanced domain analysis.
