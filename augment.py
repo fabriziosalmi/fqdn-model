@@ -251,16 +251,34 @@ def count_subdomains(fqdn):
     ext = tldextract.extract(fqdn)
     if not ext.subdomain:
         return 0
-    subdomain_count = len(ext.subdomain.split('.'))
+    # Normalize subdomain count by not counting 'www' as a separate subdomain
+    subdomains = ext.subdomain.split('.')
+    if subdomains and subdomains[0] == 'www':
+        subdomains = subdomains[1:]
+    subdomain_count = len(subdomains)
     return 0 if subdomain_count <= MAX_SUBDOMAINS else 1
 
 def analyze_fqdn(fqdn, default_is_bad_numeric, whois_enabled):
     if fqdn in processed_fqdns:
         return None
-
+        
+    # Normalize domain by removing 'www.' prefix for consistent classification
+    # Store original FQDN for display purposes
+    original_fqdn = fqdn
+    
+    # Always normalize the domain for feature extraction and classification
+    ext = tldextract.extract(fqdn)
+    # Create a normalized version without www for consistent classification
+    normalized_domain = f"{ext.domain}.{ext.suffix}"
+    
+    # Use the normalized domain for all feature extraction and classification
+    # but keep track of the original for display purposes
+    fqdn = normalized_domain
+    
     results = {
-        'FQDN': fqdn,
+        'FQDN': original_fqdn,  # Keep original FQDN for display
         'Overall_Score': default_is_bad_numeric,
+        'Has_WWW': 1 if ext.subdomain.startswith('www') else 0,  # Track www prefix but don't use for classification
         'DNS_A_Record': UNKNOWN_VALUE,
         'DNS_AAAA_Record': UNKNOWN_VALUE,
         'DNS_MX_Record': UNKNOWN_VALUE,
@@ -381,6 +399,7 @@ def calculate_overall_score(results, default_is_bad_numeric):
         'Num_Hyphens', 'Num_Digits', 'Contains_IP_Address', 'URL_Shortener',
         'DNS_CNAME_Resolution'
     ]
+    # Has_WWW is intentionally excluded from bad_indicators to ensure it doesn't affect classification
     if any(results[indicator] == 1 for indicator in bad_indicators):
         return 1
 
