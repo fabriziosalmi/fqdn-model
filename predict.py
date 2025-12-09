@@ -8,10 +8,11 @@ import logging
 import os
 import argparse
 from augment import analyze_fqdn
-import signal
+import threading
+from functools import wraps
 import time
 from typing import List, Tuple, Optional, Union
-import concurrent.futures
+import settings as conf
 
 console = Console()
 logging.basicConfig(
@@ -23,34 +24,46 @@ logging.basicConfig(
 log = logging.getLogger("rich")
 
 # Constants
-ANALYSIS_TIMEOUT = 30  # seconds per FQDN
-MAX_RETRIES = 3
-RETRY_DELAY = 1
-MAX_BATCH_SIZE = 100
+ANALYSIS_TIMEOUT = conf.ANALYSIS_TIMEOUT
+MAX_RETRIES = conf.MAX_RETRIES
+RETRY_DELAY = conf.RETRY_DELAY
+MAX_BATCH_SIZE = conf.MAX_BATCH_SIZE
 
-class TimeoutError(Exception):
+class AnalysisTimeoutError(Exception):
     """Raised when an operation times out"""
     pass
 
 def analyze_with_timeout(fqdn: str) -> Optional[dict]:
-    """Wrapper for analyze_fqdn with timeout."""
-    def handler(signum, frame):
-        raise TimeoutError(f"Analysis timed out after {ANALYSIS_TIMEOUT} seconds")
+    """Wrapper for analyze_fqdn with threading-based timeout."""
+    
+    result_container = {"result": None, "exception": None}
+    
+    def target():
+        try:
+            result_container["result"] = analyze_fqdn(fqdn, default_is_bad_numeric=0, whois_enabled=False)
+        except Exception as e:
+            result_container["exception"] = e
 
-    signal.signal(signal.SIGALRM, handler)
-    signal.alarm(ANALYSIS_TIMEOUT)
-
+    thread = threading.Thread(target=target)
+    thread.daemon = True # Daemon threads are abruptly stopped when the main thread exits, which is what we want if we timeout? No, we just ignore it.
+    
     try:
-        result = analyze_fqdn(fqdn, default_is_bad_numeric=0, whois_enabled=False)
-        return result
-    except TimeoutError as te:
-        log.warning(f"Timeout analyzing {fqdn}: {str(te)}")
-        return None
+        thread.start()
+        thread.join(timeout=ANALYSIS_TIMEOUT)
+        
+        if thread.is_alive():
+            # Thread is still running after timeout
+            log.warning(f"Timeout analyzing {fqdn}")
+            return None
+            
+        if result_container["exception"]:
+            raise result_container["exception"]
+            
+        return result_container["result"]
+
     except Exception as e:
         log.error(f"Error analyzing {fqdn}: {str(e)}")
         return None
-    finally:
-        signal.alarm(0)
 
 def load_models(model_dir):
     """Load the saved model and preprocessing components."""

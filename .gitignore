@@ -4,3 +4,8 @@ __pycache__
 fqdn_analysis_progress.txt
 fqdn_analysis_dashboard.html
 wandb
+node_modules
+docs/.vitepress/dist
+docs/.vitepress/cache
+venv/
+.pytest_cache/

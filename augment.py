@@ -16,9 +16,27 @@ import datetime
 import tldextract
 from functools import lru_cache, wraps
 import logging
-import configparser
+import requests
+import socket
+import dns.resolver
+import time
+import ssl
+from urllib.parse import urlparse
+from bs4 import BeautifulSoup
+import concurrent.futures
+import os
+import signal
+import sys
+import argparse
+from rich.progress import Progress, SpinnerColumn, TimeElapsedColumn, BarColumn, TextColumn
+from rich.console import Console
+import datetime
+import tldextract
+from functools import lru_cache, wraps
+import logging
 from multiprocessing import Value
 import json
+import settings as conf
 
 try:
     import whois
@@ -26,34 +44,26 @@ try:
 except ImportError:
     WHOIS_ENABLED = False
 
-config = configparser.ConfigParser()
-if os.path.exists('config.ini'):
-    config.read('config.ini')
-
-INPUT_FILE = config.get('DEFAULT', 'INPUT_FILE', fallback='fqdns.txt')
-OUTPUT_FILE = config.get('DEFAULT', 'OUTPUT_FILE', fallback='fqdn_analysis.json')
-PROGRESS_FILE = config.get('DEFAULT', 'PROGRESS_FILE', fallback='fqdn_analysis_progress.txt')
-MAX_WORKERS = config.getint('DEFAULT', 'MAX_WORKERS', fallback=32)
-TIMEOUT = config.getfloat('DEFAULT', 'TIMEOUT', fallback=1.0)
-UNKNOWN_VALUE = config.getint('DEFAULT', 'UNKNOWN_VALUE', fallback=2)
-RISKY_TLDS = config.get('DEFAULT', 'RISKY_TLDS', fallback='.xyz,.top,.loan,.online,.club,.click,.icu,.cn').split(',')
-MAX_REDIRECTS = config.getint('DEFAULT', 'MAX_REDIRECTS', fallback=5)
-NEGATIVE_CACHE_TTL = config.getint('DEFAULT', 'NEGATIVE_CACHE_TTL', fallback=30)
-POSITIVE_CACHE_TTL = config.getint('DEFAULT', 'POSITIVE_CACHE_TTL', fallback=3600)
-SHORTENER_DOMAINS = config.get('DEFAULT', 'SHORTENER_DOMAINS',
-                               fallback='bit.ly,t.co,tinyurl.com,ow.ly,is.gd,buff.ly,adf.ly').split(',')
-MAX_DOMAIN_LENGTH = config.getint('DEFAULT', 'MAX_DOMAIN_LENGTH', fallback=63)
-GOOD_DOMAIN_LENGTH = config.getint('DEFAULT', 'GOOD_DOMAIN_LENGTH', fallback=20)
-MAX_HYPHENS = config.getint('DEFAULT', 'MAX_HYPHENS', fallback=1)
-MAX_DIGITS = config.getint('DEFAULT', 'MAX_DIGITS', fallback=4)
-MAX_SUBDOMAINS = config.getint('DEFAULT', 'MAX_SUBDOMAINS', fallback=3)
-KEYWORDS = config.get('DEFAULT', 'KEYWORDS',
-                      fallback='login,signin,account,verify,secure,update,bank,payment,free,download,admin,password,credential').split(
-    ',')
-DNS_RESOLVERS = config.get('DEFAULT', 'DNS_RESOLVERS',
-                            fallback='1.1.1.1,1.0.0.1,8.8.8.8,8.8.4.4,208.67.222.222,208.67.220.220,9.9.9.9,149.112.112.112,4.2.2.2,4.2.2.1').split(
-    ',')
-WHOIS_TIMEOUT = config.getfloat('DEFAULT', 'WHOIS_TIMEOUT', fallback=2.0)
+# Use settings from settings.py
+INPUT_FILE = conf.INPUT_FILE
+OUTPUT_FILE = conf.OUTPUT_FILE
+PROGRESS_FILE = conf.PROGRESS_FILE
+MAX_WORKERS = conf.MAX_WORKERS
+TIMEOUT = conf.TIMEOUT
+UNKNOWN_VALUE = conf.UNKNOWN_VALUE
+RISKY_TLDS = conf.RISKY_TLDS
+MAX_REDIRECTS = conf.MAX_REDIRECTS
+NEGATIVE_CACHE_TTL = conf.NEGATIVE_CACHE_TTL
+POSITIVE_CACHE_TTL = conf.POSITIVE_CACHE_TTL
+SHORTENER_DOMAINS = conf.SHORTENER_DOMAINS
+MAX_DOMAIN_LENGTH = conf.MAX_DOMAIN_LENGTH
+GOOD_DOMAIN_LENGTH = conf.GOOD_DOMAIN_LENGTH
+MAX_HYPHENS = conf.MAX_HYPHENS
+MAX_DIGITS = conf.MAX_DIGITS
+MAX_SUBDOMAINS = conf.MAX_SUBDOMAINS
+KEYWORDS = conf.KEYWORDS
+DNS_RESOLVERS = conf.DNS_RESOLVERS
+WHOIS_TIMEOUT = conf.WHOIS_TIMEOUT
 
 processed_fqdns = set()
 shutdown_event = False
