@@ -1,9 +1,9 @@
-```javascript
+
 import { defineConfig } from 'vitepress'
 
 export default defineConfig({
-  base: "/fqdn-model/",
-  title: "FQDN Model",
+    base: "/fqdn-model/",
+    title: "FQDN Model",
     description: "Machine Learning FQDN Classifier",
     themeConfig: {
         nav: [
