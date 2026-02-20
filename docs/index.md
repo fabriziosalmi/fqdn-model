@@ -1,12 +1,10 @@
 # FQDN Model
 
-A production-grade Machine Learning classifier for predicting whether an FQDN is **benign** or **malicious**.
+A Machine Learning classifier for predicting whether an FQDN is **benign** or **malicious**.
 
-## Key Features
+## Overview
 
-- **Advanced Feature Engineering**: 20+ features (DNS, SSL, Whois, etc.)
-- **Production-Ready API**: Secure Flask API.
-- **High Performance**: Optimized, threaded execution.
+The project trains a classifier on features extracted from domain analysis, including DNS lookups, SSL checks, HTTP behavior, and WHOIS data. It supports Gaussian Naive Bayes, Logistic Regression, and Random Forest (default) models.
 
 ## Getting Started
 
@@ -14,4 +12,4 @@ Check out the [Installation](/installation) guide to get started.
 
 ## Credits
 
-Powered by data from [fabriziosalmi/blacklist](https://github.com/fabriziosalmi/blacklist).
+Data source: [fabriziosalmi/blacklist](https://github.com/fabriziosalmi/blacklist).

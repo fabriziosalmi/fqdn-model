@@ -4,34 +4,31 @@
 [![GitHub Pull Requests](https://img.shields.io/github/issues-pr/fabriziosalmi/fqdn-model)](https://github.com/fabriziosalmi/fqdn-model/pulls)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-passing-brightgreen)]()
 
-A production-grade Machine Learning classifier for predicting whether an FQDN (Fully Qualified Domain Name) is **benign** or **malicious**. 
+A Machine Learning classifier for predicting whether an FQDN (Fully Qualified Domain Name) is **benign** or **malicious**.
 
-Built with security and scalability in mind, this project leverages a Random Forest Classifier trained on extensive datasets. It features a robust feature extraction pipeline (DNS, SSL, Whois, lexical analysis) and exposes a production-ready Flask API.
+The project trains a classifier on features extracted from domain analysis (DNS, SSL, HTTP behavior, WHOIS, and lexical properties) and exposes a Flask API for inference.
 
-> **Data Source Attribution**: This model is designed to work with high-quality threat intelligence data. It specifically leverages the aggregated daily blacklists from [fabriziosalmi/blacklist](https://github.com/fabriziosalmi/blacklist), ensuring the model is trained on up-to-date real-world threats.
+> **Data Source**: The model can be trained using domain lists from [fabriziosalmi/blacklist](https://github.com/fabriziosalmi/blacklist) or any compatible blacklist/whitelist files.
 
-## 🚀 Key Features
+## Key Features
 
-*   **Advanced Feature Engineering**: Extracts over 20 distinct features including DNS records, SSL validity, lexical entropy, and specific keyword patterns.
-*   **Production-Ready API**: A secure Flask-based REST API with input validation, health checks, and metrics.
-*   **Robust Architecture**: 
-    -   **Centralized Configuration**: All settings managed via `settings.py` (with `config.ini` override support).
-    -   **Thread-Safe Timeouts**: Cross-platform (Windows/Linux/macOS) support for analysis timeouts.
-    -   **Testing Suite**: Comprehensive `pytest` coverage for API and prediction logic.
-*   **Performance**: Optimized extraction pipeline with caching and multithreading.
-*   **Rich CLI**: Beautiful terminal output using the `rich` library.
+*   **Feature Extraction**: Extracts ~22 binary/ternary features per domain including DNS record presence, SSL certificate validity, HTTP redirect behavior, HSTS, suspicious keywords, TLD risk, domain length, hyphen/digit counts, and optional WHOIS data.
+*   **Multiple Model Types**: Supports Gaussian Naive Bayes, Logistic Regression, and Random Forest (default).
+*   **Flask API**: REST API with input validation and health check endpoint.
+*   **CLI Prediction**: Classify domains directly from the terminal using `predict.py`.
+*   **Centralized Configuration**: All settings managed via `settings.py` with `config.ini` override support.
+*   **Multithreaded Extraction**: Concurrent domain analysis using a configurable thread pool.
 
-## 🏗️ Architecture
+## Architecture
 
 The project consists of three main components:
 
-1.  **`augment.py`**: The simplified ETL pipeline. It enriches raw FQDN lists (like those from [fabriziosalmi/blacklist](https://github.com/fabriziosalmi/blacklist)) with deep analysis features.
-2.  **`fqdn_classifier.py`**: The training engine. Trains a Random Forest (or other) model and serializes it using `joblib`.
+1.  **`augment.py`**: The ETL pipeline. Enriches raw FQDN lists with analysis features (DNS, HTTP, SSL, WHOIS) and writes a JSON dataset.
+2.  **`fqdn_classifier.py`**: The training script. Trains a model on the augmented dataset and serializes it using `joblib`.
 3.  **`api.py` / `predict.py`**: The inference layer. Loads the serialized model to serve predictions via CLI or HTTP API.
 
-## 🛠️ Installation
+## Installation
 
 1.  **Clone the repository:**
     ```bash
@@ -46,7 +43,7 @@ The project consists of three main components:
     pip install -r requirements.txt
     ```
 
-## 🚦 Usage
+## Usage
 
 ### 1. Training (Optional)
 If you want to retrain the model with your own data or fresh data from [fabriziosalmi/blacklist](https://github.com/fabriziosalmi/blacklist):
@@ -56,9 +53,9 @@ If you want to retrain the model with your own data or fresh data from [fabrizio
 wget https://raw.githubusercontent.com/fabriziosalmi/blacklist/master/blacklist.txt
 wget https://raw.githubusercontent.com/fabriziosalmi/blacklist/master/whitelist.txt
 
-# 2. Augment data (Extract features)
-python augment.py -i blacklist.txt -o blacklist.json --is_bad 1
-python augment.py -i whitelist.txt -o whitelist.json --is_bad 0
+# 2. Augment data (extract features)
+python augment.py -i blacklist.txt -o blacklist.json --is_bad Yes
+python augment.py -i whitelist.txt -o whitelist.json --is_bad No
 
 # 3. Merge & Train
 python merge_datasets.py blacklist.json whitelist.json -o dataset.json
@@ -70,14 +67,11 @@ Classify domains directly from your terminal:
 
 ```bash
 python predict.py google.com
-# Output: Benign (99.9%)
-
 python predict.py malicious-test-domain.xyz
-# Output: Malicious (95.2%)
 ```
 
 ### 3. API Serving
-Start the secure production server:
+Start the server:
 
 ```bash
 python api.py
@@ -97,18 +91,18 @@ curl -X POST http://localhost:5000/predict \
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 The project uses a hierarchical configuration system:
 1.  **Defaults**: Defined in `settings.py`.
 2.  **Config File**: Values in `config.ini` override defaults.
-3.  **Environment/CLI**: Runtime arguments override everything.
+3.  **CLI arguments**: Runtime arguments override everything.
 
 See `settings.py` for all available options.
 
-## 🧪 Testing
+## Testing
 
-We fervently believe in stability. Run the test suite to verify your environment:
+Run the test suite:
 
 ```bash
 pytest tests/
@@ -121,7 +115,7 @@ The training data consists of two text files:
 *   **`whitelist.txt`:** Contains a list of benign FQDNs, one per line.
 *   **`blacklist.txt`:** Contains a list of malicious FQDNs, one per line.
 
-Each line in these files should contain only the FQDN itself, without any extra characters or whitespace.
+Each line should contain only the FQDN itself, without extra characters or whitespace.
 
 **Example:**
 
@@ -143,51 +137,58 @@ evil-domain.com
 
 ## Model Details
 
-*   **Model:** Random Forest Classifier
-*   **Number of Estimators:** 100 (configurable in `fqdn_classifier.py`)
+*   **Supported Models:** Gaussian Naive Bayes (`gaussian_nb`), Logistic Regression (`logistic_regression`), Random Forest (`random_forest`, default)
+*   **Default Estimators (Random Forest):** 100 (configurable via `--rf_n_estimators`)
 
-### Feature Engineering
+### Features Extracted
 
-*   Features are extracted using the `extract_features` function in `feature_engineering.py`. These features include:
-    *   Length of the FQDN, domain, subdomain, and suffix.
-    *   Number of dots, hyphens, and underscores.
-    *   Number of digits.
-    *   Number of subdomains.
-    *   Presence of "www".
-    *   Character distribution.
-    *   Entropy.
-    *   Consonant, vowel, and digit ratios.
-    *   *Important:* The `extract_features` function *must* return the same data types as used during training (e.g., `np.float16` if training with reduced precision).
+Features are extracted by the `analyze_fqdn` function in `augment.py`. Each feature is encoded as a binary or ternary value (0 = benign indicator, 1 = malicious indicator, 2 = unknown/unavailable):
 
-### Model Selection
-
-*   The Random Forest Classifier was chosen for its balance of accuracy, interpretability, and robustness. Other models could be explored, but the Random Forest provides a good starting point.
+*   DNS record presence (A, AAAA, MX, TXT, CNAME)
+*   SSL certificate validity
+*   HTTP status code
+*   Final protocol (HTTP vs HTTPS)
+*   HTTP-to-HTTPS redirect
+*   Excessive redirects
+*   HSTS header presence
+*   Suspicious keyword detection in page content
+*   SSL verification failure
+*   Risky TLD
+*   Domain length
+*   Hyphen count
+*   Digit count
+*   IP address embedded in domain
+*   URL shortener detection
+*   Subdomain count
+*   Page title and body presence
+*   WHOIS data (creation date, expiration date, age) — optional, requires `--whois` flag
 
 ### Model Persistence
 
-*   Trained models are saved and loaded using `joblib` for efficient serialization and deserialization. This allows you to train the model once and then reuse it for prediction without retraining.
+Trained models are saved using `joblib` in the `models/` directory and loaded automatically by `predict.py` and `api.py`.
 
 ## Performance Metrics
 
-The `fqdn_classifier.py` script evaluates the trained model using the following metrics:
+The `fqdn_classifier.py` script evaluates the trained model using:
 
-*   **Accuracy:** The overall correctness of the model.
-*   **ROC AUC:** Area Under the Receiver Operating Characteristic curve; a measure of the model's ability to distinguish between classes.
-*   **Precision:** The proportion of correctly identified malicious domains out of all domains predicted as malicious.
-*   **Recall:** The proportion of correctly identified malicious domains out of all actual malicious domains.
-*   **F1-Score:** The harmonic mean of precision and recall.
-*   **Confusion Matrix:** A table showing the counts of true positives, true negatives, false positives, and false negatives.
-*   **Feature Importance:** A ranking of the features based on their contribution to the model's performance.
+*   **Accuracy:** Overall correctness of the model.
+*   **ROC AUC:** Area under the receiver operating characteristic curve.
+*   **Precision:** Proportion of true positives among predicted positives.
+*   **Recall:** Proportion of true positives among actual positives.
+*   **F1-Score:** Harmonic mean of precision and recall.
+*   **Log Loss / Brier Score:** Probability calibration metrics.
+*   **Confusion Matrix:** Counts of true/false positives and negatives.
+*   **Feature Importance:** Ranking of features by contribution (for Random Forest and Logistic Regression).
 
 ## Contributing
 
 Contributions are welcome! Here's how you can contribute:
 
-1.  **Fork the repository.**
-2.  **Create a new branch for your feature or bug fix:** `git checkout -b feature/my-new-feature` or `git checkout -b fix/my-bug-fix`
-3.  **Make your changes and commit them:** `git commit -am 'Add some feature'`
-4.  **Push to the branch:** `git push origin feature/my-new-feature`
-5.  **Create a new Pull Request.**
+1.  Fork the repository.
+2.  Create a new branch: `git checkout -b feature/my-new-feature` or `git checkout -b fix/my-bug-fix`
+3.  Make your changes and commit them: `git commit -am 'Add some feature'`
+4.  Push to the branch: `git push origin feature/my-new-feature`
+5.  Create a new Pull Request.
 
 **Guidelines:**
 
@@ -202,24 +203,12 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## Credits
 
-*   This project uses the following libraries:
-    *   `scikit-learn`: [https://scikit-learn.org/](https://scikit-learn.org/)
-    *   `tldextract`: [https://github.com/john-kurkowski/tldextract](https://github.com/john-kurkowski/tldextract)
-    *   `joblib`: [https://joblib.readthedocs.io/en/latest/](https://joblib.readthedocs.io/en/latest/)
-    *   `rich`: [https://github.com/Textualize/rich](https://github.com/Textualize/rich)
-    *   `Flask`: [https://flask.palletsprojects.com/](https://flask.palletsprojects.com/)
-    *   `requests`: [https://requests.readthedocs.io/en/latest/](https://requests.readthedocs.io/en/latest/) (For API example)
+*   `scikit-learn`: [https://scikit-learn.org/](https://scikit-learn.org/)
+*   `tldextract`: [https://github.com/john-kurkowski/tldextract](https://github.com/john-kurkowski/tldextract)
+*   `joblib`: [https://joblib.readthedocs.io/en/latest/](https://joblib.readthedocs.io/en/latest/)
+*   `rich`: [https://github.com/Textualize/rich](https://github.com/Textualize/rich)
+*   `Flask`: [https://flask.palletsprojects.com/](https://flask.palletsprojects.com/)
 
 ## Contact
 
-If you have any questions or suggestions, feel free to open an issue or contact me directly.
-
-## Documentation Updates
-
-* The documentation in this README has been updated to fix typos and improve clarity.
-* All references to the prediction script now use `predict.py`.
-* Additional details about configuration, such as the settings in config.ini, are now available in their own section below.
-
-## Configuration Details
-
-The configuration file (`config.ini`) in the repository allows you to customize parameters such as DNS resolvers, timeouts, and others. Refer to the comments within `config.ini` for detailed explanations of each parameter.
+If you have any questions or suggestions, feel free to open an issue.

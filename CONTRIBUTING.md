@@ -2,7 +2,7 @@
 
 Thank you for your interest in contributing to the FQDN-Model project! We welcome contributions from the community to make this tool even better.
 
-## 🤝 How to Contribute
+## How to Contribute
 
 1.  **Fork the Repository**: unique fork for your changes.
 2.  **Create a Branch**: `git checkout -b feature/amazing-feature` or `git checkout -b fix/critical-bug`.
@@ -11,7 +11,7 @@ Thank you for your interest in contributing to the FQDN-Model project! We welcom
 5.  **Push**: `git push origin feature/amazing-feature`.
 6.  **Open a Pull Request**: Describe your changes and link to any relevant issues.
 
-## 🧪 Development Setup
+## Development Setup
 
 1.  **Environment**:
     ```bash
@@ -26,7 +26,7 @@ Thank you for your interest in contributing to the FQDN-Model project! We welcom
     pytest tests/
     ```
 
-## 📐 Coding Standards
+## Coding Standards
 
 *   **Python Version**: 3.8+
 *   **Style**: Follow PEP 8.
@@ -35,7 +35,7 @@ Thank you for your interest in contributing to the FQDN-Model project! We welcom
     *   No `debug=True` in production code.
     *   No usage of `signal.SIGALRM` (breaks Windows compatibility).
 
-## 🐛 Reporting Issues
+## Reporting Issues
 
 Please use the GitHub Issue Tracker to report bugs. Include:
 -   Version of the software
