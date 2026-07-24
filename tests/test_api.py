@@ -44,3 +44,9 @@ def test_predict_empty_fqdn(client):
     payload = {'fqdn': ''}
     response = client.post('/predict', data=json.dumps(payload), content_type='application/json')
     assert response.status_code == 400
+
+def test_predict_non_json_body(client):
+    """Test rejecting non-JSON request body."""
+    response = client.post('/predict', data='not json', content_type='application/json')
+    assert response.status_code == 400
+    assert 'error' in response.get_json()
