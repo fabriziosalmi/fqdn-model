@@ -21,7 +21,8 @@ def get_list_setting(key, default):
     val = config.get('DEFAULT', key, fallback=None)
     if val is None:
         return default
-    return [x.strip() for x in val.split(',')]
+    items = [x.strip() for x in val.split(',')]
+    return [x for x in items if x]  # Filter out empty strings
 
 # File Paths
 INPUT_FILE = get_setting('INPUT_FILE', 'fqdns.txt')
