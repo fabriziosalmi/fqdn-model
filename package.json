@@ -1,13 +1,16 @@
 {
-    "name": "fqdn-model-docs",
-    "version": "1.4.0",
-    "private": true,
-    "scripts": {
-        "docs:dev": "vitepress dev docs",
-        "docs:build": "vitepress build docs",
-        "docs:preview": "vitepress preview docs"
-    },
-    "devDependencies": {
-        "vitepress": "^1.0.0"
-    }
+  "name": "fqdn-model-docs",
+  "version": "1.4.0",
+  "private": true,
+  "scripts": {
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs"
+  },
+  "devDependencies": {
+    "vitepress": "^1.0.0"
+  },
+  "overrides": {
+    "vite": "^6.4.5"
+  }
 }
